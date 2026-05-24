@@ -1,0 +1,5 @@
+# client config example
+addr: 127.0.0.1
+port: 1080
+token: "your-secret-token"
+server: "tunnel-oracle.022025.xyz" # 不用加 wss://，自动补
