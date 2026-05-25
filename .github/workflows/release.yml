@@ -73,7 +73,7 @@ jobs:
         run: |
           curl.exe -sL https://github.com/xjasonlyu/tun2socks/releases/download/v2.6.0/tun2socks-windows-amd64-v3.zip -o tun2socks.zip
           Expand-Archive -Force tun2socks.zip -DestinationPath .
-          mv tun2socks-windows-amd64.exe tun2socks.exe
+          mv tun2socks-windows-amd64-v3.exe tun2socks.exe
         shell: powershell
 
       - name: Download wintun (Windows)
