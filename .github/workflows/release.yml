@@ -56,11 +56,21 @@ jobs:
           cp server/target/${{ matrix.target }}/release/server${{ matrix.ext }} dist/
         shell: bash
 
+      - name: Download tun2socks
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          curl -sL https://github.com/xjasonlyu/tun2socks/releases/download/v2.6.0/tun2socks-linux-amd64.zip -o tun2socks.zip
+          unzip -o tun2socks.zip
+          mv tun2socks-linux-amd64 tun2socks
+          chmod +x tun2socks
+        shell: bash
+
       - name: Package Linux
         if: matrix.os == 'ubuntu-latest'
         run: |
           cp scripts/proxy.sh dist/
           cp README.md dist/
+          cp tun2socks dist/
           zip -r ${{ matrix.zip }} dist/
         shell: bash
 
