@@ -68,6 +68,8 @@ This sets up:
 - TUN interface with fake-ip range (198.18.0.0/16)
 - tun2socks forwarding all traffic through the local SOCKS5 client
 
+Powered by [tun2socks](https://github.com/xjasonlyu/tun2socks).
+
 ## Build Release
 
 ```bash
@@ -77,8 +79,10 @@ cargo build --release --manifest-path server/Cargo.toml
 
 ## GitHub Release
 
+Push a `v*` tag to trigger automatic builds:
+
 ```bash
-gh release delete beta0.1 --repo kurashizu/socks5-proxy --yes
-gh release create beta0.1 --title "beta0.1" --notes "..." --repo kurashizu/socks5-proxy
-gh release upload beta0.1 client/target/release/client server/target/release/server --repo kurashizu/socks5-proxy
+git tag v1.0.0-beta.1 && git push origin v1.0.0-beta.1
 ```
+
+Releases are automatically generated with Windows (x86_64-msvc) and Linux (x86_64-musl) binaries.
