@@ -81,8 +81,9 @@ jobs:
         continue-on-error: true
         run: |
           curl.exe -sL https://www.wintun.net/builds/wintun-0.14.1.zip -o wintun.zip
-          Expand-Archive -Force wintun.zip -DestinationPath wintun
-          cp wintun/bin/amd64/wintun.dll dist/
+          Expand-Archive -Force wintun.zip -DestinationPath .
+          $dll = Get-ChildItem -Recurse -Filter wintun.dll | Select-Object -First 1 -ExpandProperty FullName
+          cp $dll dist/
         shell: powershell
 
       # ── Package ──────────────────────────────────────────────────────────────
