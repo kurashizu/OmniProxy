@@ -88,6 +88,10 @@ Options:
 - Rust 1.75+
 - For TUN mode: Linux with TUN/TAP support, iproute2, sudo access
 
+## Credits
+
+Powered by [tun2socks](https://github.com/xjasonlyu/tun2socks) and [Wintun](https://www.wintun.net/).
+
 ## License
 
 MIT
