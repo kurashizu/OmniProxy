@@ -35,6 +35,18 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y musl-tools
 
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            client/target
+            server/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
       - name: Build client
         run: |
           cargo build --release --manifest-path client/Cargo.toml --target ${{ matrix.target }}
