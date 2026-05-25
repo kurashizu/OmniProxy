@@ -8,19 +8,21 @@ name = "client"
 path = "src/main.rs"
 
 [dependencies]
-tokio = { version = "1", features = ["full"] }
-fast-socks5 = "1"
-rustls = { version = "0.23", features = ["ring"] }
-tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
-futures-util = "0.3"
-anyhow = "1"
-tracing = "0.1"
+tokio         = { version = "1", features = ["full"] }
+fast-socks5   = "1"
+rustls        = { version = "0.23", features = ["ring"] }
+tokio-rustls  = "0.26"
+webpki-roots  = "0.26"
+tokio-tungstenite = { version = "0.26" }   # 不带 rustls feature，手动做 TLS
+futures-util  = "0.3"
+anyhow        = "1"
+tracing       = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-base64 = "0.22"
-rand = "0.9"
-url = "2"
-clap = { version = "4", features = ["derive"] }
-serde = { version = "1", features = ["derive"] }
-serde_yaml = "0.9"
-bytes = "1"
-dashmap = "6"
+base64        = "0.22"
+rand          = "0.9"
+url           = "2"
+clap          = { version = "4", features = ["derive"] }
+serde         = { version = "1", features = ["derive"] }
+serde_yaml    = "0.9"
+bytes         = "1"
+libc          = "0.2"
