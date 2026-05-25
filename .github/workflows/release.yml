@@ -76,6 +76,16 @@ jobs:
           mv tun2socks-windows-amd64.exe tun2socks.exe
         shell: powershell
 
+      # ── Download wintun (Windows) ────────────────────────────────────────────
+      - name: Download wintun (Windows)
+        if: matrix.os == 'windows-latest'
+        continue-on-error: true
+        run: |
+          curl -sL https://www.wintun.net/builds/wintun-0.14.1.zip -o wintun.zip
+          Expand-Archive -Force wintun.zip -DestinationPath wintun
+          cp wintun/bin/amd64/wintun.dll dist/
+        shell: powershell
+
       # ── Package ──────────────────────────────────────────────────────────────
       - name: Package Linux
         if: matrix.os == 'ubuntu-latest'
