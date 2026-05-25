@@ -58,6 +58,7 @@ jobs:
 
       - name: Download tun2socks
         if: matrix.os == 'ubuntu-latest'
+        continue-on-error: true
         run: |
           curl -sL https://github.com/xjasonlyu/tun2socks/releases/download/v2.6.0/tun2socks-linux-amd64.zip -o tun2socks.zip
           unzip -o tun2socks.zip
@@ -70,7 +71,7 @@ jobs:
         run: |
           cp scripts/proxy.sh dist/
           cp README.md dist/
-          cp tun2socks dist/
+          cp tun2socks dist/ || true
           zip -r ${{ matrix.zip }} dist/
         shell: bash
 
