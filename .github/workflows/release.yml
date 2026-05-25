@@ -101,7 +101,8 @@ jobs:
         run: |
           cp README.md dist/
           cp scripts/proxy.ps1 dist/
-          cp tun2socks.exe dist/ || true
+          if (Test-Path tun2socks.exe) { cp tun2socks.exe dist/ }
+          if (Test-Path wintun.dll) { cp wintun.dll dist/ }
           Compress-Archive -Path dist -DestinationPath ${{ matrix.zip }}
         shell: powershell
 
