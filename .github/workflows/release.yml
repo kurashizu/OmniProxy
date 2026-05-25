@@ -71,17 +71,16 @@ jobs:
         if: matrix.os == 'windows-latest'
         continue-on-error: true
         run: |
-          curl -sL https://github.com/xjasonlyu/tun2socks/releases/download/v2.6.0/tun2socks-windows-amd64-v3.zip -o tun2socks.zip
+          curl.exe -sL https://github.com/xjasonlyu/tun2socks/releases/download/v2.6.0/tun2socks-windows-amd64-v3.zip -o tun2socks.zip
           Expand-Archive -Force tun2socks.zip -DestinationPath .
           mv tun2socks-windows-amd64.exe tun2socks.exe
         shell: powershell
 
-      # ── Download wintun (Windows) ────────────────────────────────────────────
       - name: Download wintun (Windows)
         if: matrix.os == 'windows-latest'
         continue-on-error: true
         run: |
-          curl -sL https://www.wintun.net/builds/wintun-0.14.1.zip -o wintun.zip
+          curl.exe -sL https://www.wintun.net/builds/wintun-0.14.1.zip -o wintun.zip
           Expand-Archive -Force wintun.zip -DestinationPath wintun
           cp wintun/bin/amd64/wintun.dll dist/
         shell: powershell
@@ -102,7 +101,6 @@ jobs:
           cp README.md dist/
           cp scripts/proxy.ps1 dist/
           if (Test-Path tun2socks.exe) { cp tun2socks.exe dist/ }
-          if (Test-Path wintun.dll) { cp wintun.dll dist/ }
           Compress-Archive -Path dist -DestinationPath ${{ matrix.zip }}
         shell: powershell
 
