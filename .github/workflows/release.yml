@@ -13,9 +13,11 @@ jobs:
           - target: x86_64-pc-windows-msvc
             os: windows-latest
             ext: .exe
+            zip: socks5-proxy-windows-x86_64-msvc.zip
           - target: x86_64-unknown-linux-musl
             os: ubuntu-latest
             ext: ""
+            zip: socks5-proxy-linux-x86_64-musl.zip
 
     runs-on: ${{ matrix.os }}
 
@@ -32,18 +34,6 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y musl-tools
-
-      - name: Cache cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            client/target
-            server/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
 
       - name: Build client
         run: |
@@ -62,19 +52,41 @@ jobs:
         run: |
           cp scripts/proxy.sh dist/
           cp README.md dist/
-          zip -r socks5-proxy-linux-x86_64-musl.zip dist/
+          zip -r ${{ matrix.zip }} dist/
 
       - name: Package Windows
         if: matrix.os == 'windows-latest'
         run: |
           cp README.md dist/
-          Compress-Archive -Path dist -DestinationPath socks5-proxy-windows-x86_64-msvc.zip
+          Compress-Archive -Path dist -DestinationPath ${{ matrix.zip }}
 
       - name: Upload assets
-        uses: softprops/action-gh-release@v1
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.zip }}
+          path: ${{ matrix.zip }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Linux
+        uses: actions/download-artifact@v4
+        with:
+          name: socks5-proxy-linux-x86_64-musl.zip
+          path: .
+
+      - name: Download Windows
+        uses: actions/download-artifact@v4
+        with:
+          name: socks5-proxy-windows-x86_64-msvc.zip
+          path: .
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
         with:
           files: |
-            socks5-proxy-windows-x86_64-msvc.zip
             socks5-proxy-linux-x86_64-musl.zip
+            socks5-proxy-windows-x86_64-msvc.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
