@@ -52,12 +52,14 @@ jobs:
           cargo build --release --manifest-path client/Cargo.toml --target ${{ matrix.target }}
           mkdir -p dist
           cp client/target/${{ matrix.target }}/release/client${{ matrix.ext }} dist/
+        shell: bash
 
       - name: Build server
         run: |
           cargo build --release --manifest-path server/Cargo.toml --target ${{ matrix.target }}
           mkdir -p dist
           cp server/target/${{ matrix.target }}/release/server${{ matrix.ext }} dist/
+        shell: bash
 
       - name: Package Linux
         if: matrix.os == 'ubuntu-latest'
@@ -65,12 +67,14 @@ jobs:
           cp scripts/proxy.sh dist/
           cp README.md dist/
           zip -r ${{ matrix.zip }} dist/
+        shell: bash
 
       - name: Package Windows
         if: matrix.os == 'windows-latest'
         run: |
           cp README.md dist/
           Compress-Archive -Path dist -DestinationPath ${{ matrix.zip }}
+        shell: bash
 
       - name: Upload assets
         uses: actions/upload-artifact@v4
