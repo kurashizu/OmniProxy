@@ -74,3 +74,14 @@ gh release upload beta0.1 client/target/release/client server/target/release/ser
 
 - `client/src/main.rs` — TCP + UDP handling, fragmentation, WS client
 - `server/src/main.rs` — TCP + UDP relay, fragmentation, WS server
+
+## Scripts (`scripts/`)
+
+| Script | Usage | Description |
+|--------|-------|-------------|
+| `start.sh` | `sudo ./start.sh [CLIENT_PATH] [TUN2SOCKS_PATH]` | One-shot launcher: sets up TUN, routing, starts client + tun2socks |
+| `setup_tun.sh` | `sudo ./setup_tun.sh` | Configures tun0 with fake-ip range (198.18.0.0/16) |
+| `run_client.sh` | `sudo ./run_client.sh [-- SERVER_ARGS]` | Runs client with uid-based route isolation |
+| `run_tun2socks.sh` | `./run_tun2socks.sh [TUN2SOCKS_PATH]` | Starts tun2socks connecting to local SOCKS5 |
+
+All scripts require root where noted, and have usage docs in English comments.
