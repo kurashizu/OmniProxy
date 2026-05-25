@@ -1,0 +1,62 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            ext: .exe
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            ext: ""
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build client
+        run: |
+          cargo build --release --manifest-path client/Cargo.toml --target ${{ matrix.target }}
+          mkdir -p dist
+          cp client/target/${{ matrix.target }}/release/client{{ matrix.ext }} dist/
+
+      - name: Build server
+        run: |
+          cargo build --release --manifest-path server/Cargo.toml --target ${{ matrix.target }}
+          mkdir -p dist
+          cp server/target/${{ matrix.target }}/release/server{{ matrix.ext }} dist/
+
+      - name: Package Linux
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          cp scripts/proxy.sh dist/
+          cp README.md dist/
+          zip -r socks5-proxy-linux-x86_64-musl.zip dist/
+
+      - name: Package Windows
+        if: matrix.os == 'windows-latest'
+        run: |
+          cp README.md dist/
+          Compress-Archive -Path dist -DestinationPath socks5-proxy-windows-x86_64-msvc.zip
+
+      - name: Upload assets
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            socks5-proxy-windows-x86_64-msvc.zip
+            socks5-proxy-linux-x86_64-musl.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
