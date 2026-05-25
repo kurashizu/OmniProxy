@@ -69,7 +69,7 @@ jobs:
         run: |
           cp README.md dist/
           Compress-Archive -Path dist -DestinationPath ${{ matrix.zip }}
-        shell: bash
+        shell: powershell
 
       - name: Upload assets
         uses: actions/upload-artifact@v4
