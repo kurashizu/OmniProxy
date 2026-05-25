@@ -22,6 +22,7 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
+      # ── Setup ────────────────────────────────────────────────────────────────
       - uses: actions/checkout@v4
 
       - name: Install Rust
@@ -31,9 +32,7 @@ jobs:
 
       - name: Install musl tools
         if: matrix.os == 'ubuntu-latest'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y musl-tools
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
@@ -42,6 +41,7 @@ jobs:
             client
             server
 
+      # ── Build ───────────────────────────────────────────────────────────────
       - name: Build client
         run: |
           cargo build --release --manifest-path client/Cargo.toml --target ${{ matrix.target }}
@@ -56,7 +56,8 @@ jobs:
           cp server/target/${{ matrix.target }}/release/server${{ matrix.ext }} dist/
         shell: bash
 
-      - name: Download tun2socks
+      # ── Download tun2socks ──────────────────────────────────────────────────
+      - name: Download tun2socks (Linux)
         if: matrix.os == 'ubuntu-latest'
         continue-on-error: true
         run: |
@@ -66,6 +67,16 @@ jobs:
           chmod +x tun2socks
         shell: bash
 
+      - name: Download tun2socks (Windows)
+        if: matrix.os == 'windows-latest'
+        continue-on-error: true
+        run: |
+          curl -sL https://github.com/xjasonlyu/tun2socks/releases/download/v2.6.0/tun2socks-windows-amd64-v3.zip -o tun2socks.zip
+          Expand-Archive -Force tun2socks.zip -DestinationPath .
+          mv tun2socks-windows-amd64.exe tun2socks.exe
+        shell: powershell
+
+      # ── Package ──────────────────────────────────────────────────────────────
       - name: Package Linux
         if: matrix.os == 'ubuntu-latest'
         run: |
@@ -79,20 +90,25 @@ jobs:
         if: matrix.os == 'windows-latest'
         run: |
           cp README.md dist/
+          cp scripts/proxy.ps1 dist/
+          cp tun2socks.exe dist/ || true
           Compress-Archive -Path dist -DestinationPath ${{ matrix.zip }}
         shell: powershell
 
+      # ── Upload ──────────────────────────────────────────────────────────────
       - name: Upload assets
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.zip }}
           path: ${{ matrix.zip }}
 
+  # ── Release ────────────────────────────────────────────────────────────────
   release:
     needs: build
     runs-on: ubuntu-latest
     permissions:
       contents: write
+
     steps:
       - name: Download Linux
         uses: actions/download-artifact@v4
