@@ -10,6 +10,7 @@ path = "src/main.rs"
 [dependencies]
 tokio = { version = "1", features = ["full"] }
 fast-socks5 = "1"
+rustls = { version = "0.23", features = ["ring"] }
 tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
 futures-util = "0.3"
 anyhow = "1"

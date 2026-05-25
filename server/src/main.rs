@@ -264,12 +264,15 @@ async fn handle_tcp(socket: WebSocket, target: String) {
 
 async fn handle_udp(socket: WebSocket) {
     // 每个 UDP 会话独立绑一个 socket
-    let udp = match UdpSocket::bind("0.0.0.0:0").await {
+    let udp = match UdpSocket::bind("[::]:0").await {
         Ok(s) => Arc::new(s),
-        Err(e) => {
-            warn!("[UDP] bind: {e}");
-            return;
-        }
+        Err(_) => match UdpSocket::bind("0.0.0.0:0").await {
+            Ok(s) => Arc::new(s),
+            Err(e) => {
+                warn!("[UDP] bind: {e}");
+                return;
+            }
+        },
     };
 
     let (ws_tx, ws_rx) = socket.split();
@@ -431,4 +434,3 @@ fn decode_udp_frame(data: &[u8]) -> Result<(u16, u8, u8, String, u16, Bytes)> {
     let payload = Bytes::copy_from_slice(&data[9 + host_len..]);
     Ok((frag_id, frag_no, frag_total, host, port, payload))
 }
-

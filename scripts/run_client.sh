@@ -1,4 +1,7 @@
 #!/bin/bash
+
+# 按照用户 UID 进行路由，确保客户端流量走物理网络接口
+
 set -euo pipefail
 
 TABLE=20064

@@ -156,6 +156,10 @@ fn reassemble(
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("Failed to install rustls crypto provider");
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -481,7 +485,7 @@ fn encode_udp_frame(
 
 /// 解码 UDP WS 帧
 fn decode_udp_frame(data: &[u8]) -> Result<(u16, u8, u8, String, u16, Bytes)> {
-    if data.len() < 7 {
+    if data.len() < 9 {
         anyhow::bail!("frame too short");
     }
     // typ = data[0], 忽略
