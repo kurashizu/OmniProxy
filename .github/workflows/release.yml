@@ -96,10 +96,11 @@ jobs:
           path: .
 
       - name: Upload to release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             socks5-proxy-linux-x86_64-musl.zip
             socks5-proxy-windows-x86_64-msvc.zip
+          generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
