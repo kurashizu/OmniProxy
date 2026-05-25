@@ -9,12 +9,14 @@ Both packages have CLI args and YAML config (`--config`).
 
 ## Commands
 
-```bash
-cargo build --package client
-cargo build --package server
+No workspace `Cargo.toml` — use `--manifest-path` for each package:
 
-cargo run --package client -- --server tunnel-oracle.022025.xyz --config config.yml
-cargo run --package server -- --config config.yml
+```bash
+cargo build --manifest-path client/Cargo.toml
+cargo build --manifest-path server/Cargo.toml
+
+cargo run --manifest-path client/Cargo.toml -- --server tunnel-oracle.022025.xyz --config client/config.yml
+cargo run --manifest-path server/Cargo.toml -- --config server/config.yml
 ```
 
 ## Configuration
@@ -52,7 +54,18 @@ Client flow: SOCKS5 client → local SOCKS5 → WebSocket → Server → target 
 
 No test suite exists. Manual testing with mihomo.yaml (SOCKS5 config for reference).
 
-## Build Notes
+## Release Workflow
+
+```bash
+# Build release binaries
+cargo build --release --manifest-path client/Cargo.toml
+cargo build --release --manifest-path server/Cargo.toml
+
+# GitHub release: delete old, create new, upload assets
+gh release delete beta0.1 --repo kurashizu/socks5-proxy --yes
+gh release create beta0.1 --title "beta0.1" --notes "..." --repo kurashizu/socks5-proxy
+gh release upload beta0.1 client/target/release/client server/target/release/server --repo kurashizu/socks5-proxy
+```
 
 - `client/.cargo/config.toml` enables Windows cross-compile via MinGW
 - Both use `tracing_subscriber` with env filter (`RUST_LOG`)

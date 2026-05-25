@@ -6,12 +6,12 @@ SOCKS5 proxy client-server pair tunneling traffic via WebSocket. Supports TCP an
 
 **Server** (accepts WebSocket connections):
 ```bash
-cargo run --package server -- --config server/config.yml
+cargo run --manifest-path server/Cargo.toml -- --config server/config.yml
 ```
 
 **Client** (runs local SOCKS5 proxy):
 ```bash
-cargo run --package client -- --config client/config.yml
+cargo run --manifest-path client/Cargo.toml -- --config client/config.yml
 ```
 
 ## Configuration
