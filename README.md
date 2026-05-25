@@ -1,88 +1,93 @@
 # socks5-proxy
 
-Transparent SOCKS5 proxy tunneling traffic via WebSocket. Supports TCP and UDP with a multiplexing protocol on top of WebSocket.
+SOCKS5 proxy with WebSocket transport and stream multiplexing. Supports TCP and UDP.
 
-## Architecture
+## Features
 
-```
-Client (SOCKS5) → client → WebSocket → server → target TCP/UDP
-```
-
-**client**: Listens for SOCKS5 connections, multiplexes all streams over a single WebSocket connection to the server. Auto-reconnects on disconnect.
-
-**server**: Accepts WebSocket connections, demultiplexes streams, connects to target TCP/UDP endpoints, and relays traffic back.
+- **WebSocket transport** — Tunnel traffic through Cloudflare Workers or any WebSocket endpoint
+- **Stream multiplexing** — Multiple TCP/UDP streams share a single WebSocket connection
+- **Auto-reconnect** — Client automatically reconnects on connection failure
+- **TUN transparent proxy** — Route all system traffic through the proxy via tun2socks
 
 ## Quick Start
 
-**Server**:
+### 1. Run the server
+
 ```bash
 cargo run --manifest-path server/Cargo.toml -- --config server/config.yml
 ```
 
-**Client**:
+### 2. Run the client
+
 ```bash
 cargo run --manifest-path client/Cargo.toml -- --config client/config.yml
 ```
 
-## WebSocket Multiplexing Protocol
+### 3. Configure your browser or app
 
-Frame format: `[4B stream_id][1B type][payload]`
-
-| Type | Name | Direction | Description |
-|------|------|----------|-------------|
-| 0x01 | TCP_CONNECT | C→S | New TCP stream to target |
-| 0x02 | TCP_CONNECTED | S→C | TCP connection established |
-| 0x03 | TCP_DATA | both | TCP payload data |
-| 0x04 | TCP_FIN | C→S | TCP stream closed |
-| 0x05 | UDP_DATA | C→S | UDP packet (stream_id=0) |
-
-UDP payload: `[2B host_len][host][2B port][data]`
+Point your SOCKS5 proxy to `127.0.0.1:1080`.
 
 ## Configuration
 
 ### Server (`server/config.yml`)
+
 ```yaml
 addr: 0.0.0.0
 port: 9880
-token: "your-secret-token"  # X-Proxy-Token header
+token: "your-secret-token"  # clients must send X-Proxy-Token header
 ```
 
 ### Client (`client/config.yml`)
+
 ```yaml
 addr: 127.0.0.1
 port: 1080
 token: "your-secret-token"
-server: "tunnel-oracle.022025.xyz"  # auto-prepends wss://
+server: "your-worker.your-subdomain.workers.dev"  # auto-prepends wss://
 ```
 
-## TUN Mode (Transparent Proxy)
+## Architecture
 
-For full-system proxy, use `proxy.sh` with tun2socks:
+```
+Browser/App → SOCKS5 client (127.0.0.1:1080) → WebSocket → server → target
+```
+
+**client**: SOCKS5 server that multiplexes all streams over a persistent WebSocket connection to the server. Reconnects automatically.
+
+**server**: WebSocket relay that demultiplexes streams and bridges to target TCP/UDP endpoints.
+
+## Protocol
+
+Custom framing on top of WebSocket binary messages:
+
+| Type | Name | Direction | Description |
+|------|------|----------|-------------|
+| 0x01 | TCP_CONNECT | C→S | New TCP stream |
+| 0x02 | TCP_CONNECTED | S→C | Connection success/failure |
+| 0x03 | TCP_DATA | both | Payload data |
+| 0x04 | TCP_FIN | C→S | Stream closed |
+| 0x05 | UDP_DATA | C→S | UDP packet |
+
+UDP payload: `[2B host_len][host][2B port][data]`
+
+## TUN Mode
+
+For full-system transparent proxy, use `proxy.sh` with [tun2socks](https://github.com/xjasonlyu/tun2socks):
 
 ```bash
-sudo ./scripts/proxy.sh -c ./client -t ./tun2socks -- --server example.com --token secret
+sudo ./scripts/proxy.sh -c ./client -t ./tun2socks -- --server your-worker.workers.dev --token secret
 ```
 
-This sets up:
-- Routing isolation (client user bypasses TUN to avoid routing loops)
-- TUN interface with fake-ip range (198.18.0.0/16)
-- tun2socks forwarding all traffic through the local SOCKS5 client
+Options:
+- `-c` — path to client binary (default: `./client`)
+- `-t` — path to tun2socks binary (default: `./tun2socks`)
+- `--` — arguments passed to client
 
-Powered by [tun2socks](https://github.com/xjasonlyu/tun2socks).
+## Requirements
 
-## Build Release
+- Rust 1.75+
+- For TUN mode: Linux with TUN/TAP support, iproute2, sudo access
 
-```bash
-cargo build --release --manifest-path client/Cargo.toml
-cargo build --release --manifest-path server/Cargo.toml
-```
+## License
 
-## GitHub Release
-
-Push a `v*` tag to trigger automatic builds:
-
-```bash
-git tag v1.0.0-beta.1 && git push origin v1.0.0-beta.1
-```
-
-Releases are automatically generated with Windows (x86_64-msvc) and Linux (x86_64-musl) binaries.
+MIT
