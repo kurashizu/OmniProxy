@@ -158,7 +158,6 @@ async fn run_stack(cfg: Arc<Config>, phys: PhysicalRoute) -> Result<()> {
     );
 
     // ── 1. Start tun2socks FIRST ─────────────────────────────────────────────
-    // 先让 tun2socks 启动，以便在系统层初始化并创建 TUN 虚体网卡。
     let socks_addr = format!("127.0.0.1:{}", cfg.socks_port);
     let t2s_args = vec![
         "-device".to_string(),
@@ -166,17 +165,14 @@ async fn run_stack(cfg: Arc<Config>, phys: PhysicalRoute) -> Result<()> {
         "-proxy".to_string(),
         format!("socks5://{socks_addr}"),
         "-loglevel".to_string(),
-        "warning".to_string(),
+        "warn".to_string(),
     ];
     let mut t2s = process::spawn(&cfg.tun2socks, &t2s_args, "tun2socks")?;
     info!("[stack] tun2socks started (pid {})", t2s.id().unwrap_or(0));
 
-    // ── 2. Bring up TUN + Configure Routes ────────────────────────────────────
-    // 已经移除了之前的 500ms 盲等。tun_up 内部会在 Windows 环境下优雅地轮询等待网卡就绪。
-    route::tun_up(&cfg, &phys).await?;
-    info!("[stack] TUN {} is up, routes configured", cfg.tun_name);
-
-    // ── 3. Start client ───────────────────────────────────────────────────────
+    // ── 2. Start client SECOND ───────────────────────────────────────────────
+    // Spin up the core backend client next so that local port 1080 is live and listening
+    // before any system traffic routes alter.
     let mut client_args = vec![
         "--server".to_string(),
         cfg.server.clone(),
@@ -191,6 +187,14 @@ async fn run_stack(cfg: Arc<Config>, phys: PhysicalRoute) -> Result<()> {
     }
     let mut client = process::spawn(&cfg.client, &client_args, "client")?;
     info!("[stack] client started (pid {})", client.id().unwrap_or(0));
+
+    // Give the local proxy client a tiny moment (e.g., 100ms) to safely bind to its socket port
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // ── 3. Bring up TUN + Configure Routes LAST ──────────────────────────────
+    // Now that the local inbound socket is warm and bound, it is safe to route system traffic.
+    route::tun_up(&cfg, &phys).await?;
+    info!("[stack] TUN {} is up, routes configured", cfg.tun_name);
 
     // ── 4. Wait for either child to exit ─────────────────────────────────────
     let result = tokio::select! {

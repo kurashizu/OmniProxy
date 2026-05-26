@@ -8,7 +8,7 @@ tun2socks: "./tun2socks.exe"
 # The address of your remote outbound proxy server.
 # The internal routing logic will automatically resolve this domain/IP
 # and add a bypass host route so proxy traffic doesn't loop back into the TUN.
-server: "https://your-server-domain.com"
+server: "your-server-domain.com"
 
 # Authentication token required by your remote server (Leave as "" if none).
 token: "my_secure_super_secret_token_123"

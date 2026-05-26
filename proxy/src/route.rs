@@ -196,7 +196,6 @@ mod imp {
         let tun_gw = &cfg.tun_gw;
         let prefix = cfg.tun_prefix;
 
-        // 引入轮询等待机制（最多等10秒，每500ms拉取一次）
         let find_idx_script = format!(
             r#"(Get-NetAdapter | Where-Object {{ $_.InterfaceAlias -eq '{tun}' -or $_.InterfaceDescription -like '*Wintun*' -or $_.InterfaceDescription -like '*WireGuard*' }} | Select-Object -First 1).InterfaceIndex"#
         );
@@ -231,34 +230,34 @@ mod imp {
 
         info!("[route] Found TUN adapter with InterfaceIndex: {}", idx);
 
-        // 禁用 TUN 上的自动跃点
+        // Disable Automatic Metric
         ps(&format!(
             "Set-NetIPInterface -InterfaceIndex {idx} -AutomaticMetric Disabled -InterfaceMetric 1"
         ))
         .await?;
 
-        // 绑定虚体 IP
+        // Bind IP
         ps(&format!(
             "New-NetIPAddress -InterfaceIndex {idx} -IPAddress '{tun_ip}' -PrefixLength {prefix} -DefaultGateway '{tun_gw}' -ErrorAction SilentlyContinue"
         )).await?;
 
-        // 服务器旁路静态路由
+        // Server bypass route
         if let Some(ref sip) = cfg.server_ip_hint().await {
             let gw = phys.gateway.to_string();
             let dev = &phys.iface;
             ps(&format!(
-                "Remove-NetRoute -DestinationPrefix '{sip}/32' -ErrorAction SilentlyContinue; \
+                "Remove-NetRoute -DestinationPrefix '{sip}/32' -Confirm:$false -ErrorAction SilentlyContinue; \
                  New-NetRoute -InterfaceAlias '{dev}' -DestinationPrefix '{sip}/32' -NextHop '{gw}' -RouteMetric 1"
             )).await?;
         }
 
-        // 接管系统全局默认路由
+        // Global default routes (Added -Confirm:$false here)
         ps(&format!(
-            "Remove-NetRoute -InterfaceIndex {idx} -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue; \
+            "Remove-NetRoute -InterfaceIndex {idx} -DestinationPrefix '0.0.0.0/0' -Confirm:$false -ErrorAction SilentlyContinue; \
              New-NetRoute -InterfaceIndex {idx} -DestinationPrefix '0.0.0.0/0' -NextHop '{tun_gw}' -RouteMetric 1"
         )).await?;
         ps(&format!(
-            "Remove-NetRoute -InterfaceIndex {idx} -DestinationPrefix '::/0' -ErrorAction SilentlyContinue; \
+            "Remove-NetRoute -InterfaceIndex {idx} -DestinationPrefix '::/0' -Confirm:$false -ErrorAction SilentlyContinue; \
              New-NetRoute -InterfaceIndex {idx} -DestinationPrefix '::/0' -NextHop '::' -RouteMetric 1"
         )).await?;
 
@@ -269,14 +268,16 @@ mod imp {
     pub async fn tun_down(cfg: &Config) {
         let tun = &cfg.tun_name;
         if let Some(ref sip) = cfg.server_ip_hint().await {
+            // Added -Confirm:$false
             tokio::process::Command::new("powershell")
                 .args(["-NoProfile", "-Command",
-                    &format!("Remove-NetRoute -DestinationPrefix '{sip}/32' -ErrorAction SilentlyContinue")])
+                    &format!("Remove-NetRoute -DestinationPrefix '{sip}/32' -Confirm:$false -ErrorAction SilentlyContinue")])
                 .output().await.ok();
         }
+        // Added -Confirm:$false
         tokio::process::Command::new("powershell")
             .args(["-NoProfile", "-Command",
-                &format!("Remove-NetRoute -InterfaceAlias '{tun}' -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue")])
+                &format!("Remove-NetRoute -InterfaceAlias '{tun}' -DestinationPrefix '0.0.0.0/0' -Confirm:$false -ErrorAction SilentlyContinue")])
             .output().await.ok();
         info!("[route] TUN routes removed (Windows)");
     }
