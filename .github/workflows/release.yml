@@ -10,10 +10,10 @@ jobs:
     strategy:
       matrix:
         include:
-          - target: x86_64-pc-windows-msvc
+          - target: x86_64-pc-windows-gnu
             os: windows-latest
             ext: .exe
-            zip: socks5-proxy-windows-x86_64-msvc.zip
+            zip: socks5-proxy-windows-x86_64-gnu.zip
           - target: x86_64-unknown-linux-musl
             os: ubuntu-latest
             ext: ""
@@ -33,6 +33,12 @@ jobs:
       - name: Install musl tools
         if: matrix.os == 'ubuntu-latest'
         run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Install mingw
+        if: matrix.os == 'windows-latest'
+        run: |
+          rustup target add x86_64-pc-windows-gnu
+        shell: bash
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
@@ -129,7 +135,7 @@ jobs:
       - name: Download Windows
         uses: actions/download-artifact@v4
         with:
-          name: socks5-proxy-windows-x86_64-msvc.zip
+          name: socks5-proxy-windows-x86_64-gnu.zip
           path: .
 
       - name: Upload to release
@@ -137,7 +143,7 @@ jobs:
         with:
           files: |
             socks5-proxy-linux-x86_64-musl.zip
-            socks5-proxy-windows-x86_64-msvc.zip
+            socks5-proxy-windows-x86_64-gnu.zip
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
