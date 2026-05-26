@@ -4,19 +4,41 @@
 
 - `client/` — SOCKS5 proxy client (Rust). Listens on `127.0.0.1:1080`, multiplexes streams over WebSocket.
 - `server/` — WebSocket relay server (Rust, axum). Demultiplexes streams, bridges to TCP/UDP.
+- `proxy/` — Transparent proxy management binary (Rust). TUN setup, routing, process control.
 - `scripts/` — Shell scripts for TUN-based transparent proxy setup.
 
 No workspace `Cargo.toml` — each package is independent.
 
-## Commands
+## Build Commands
 
 ```bash
 cargo build --release --manifest-path client/Cargo.toml
 cargo build --release --manifest-path server/Cargo.toml
+cargo build --release --manifest-path proxy/Cargo.toml
 
 cargo run --manifest-path client/Cargo.toml -- --config client/config.yml
 cargo run --manifest-path server/Cargo.toml -- --config server/config.yml
+cargo run --manifest-path proxy/Cargo.toml -- --config proxy/config.unix.yml
 ```
+
+## Release Workflow
+
+Push a tag starting with `v` to trigger GitHub Actions:
+```bash
+git add -A && git commit -m "..." && git tag v1.0.0-beta.X && git push origin master && git push origin v1.0.0-beta.X
+```
+
+GitHub Actions builds all packages for all platforms (Linux/macOS/Windows), downloads tun2socks + wintun, and uploads zip archives to the release.
+
+Release zip contents:
+- Linux: `client`, `server`, `proxy`, `tun2socks`, `config.yml`, `README.md`
+- Windows: `client.exe`, `server.exe`, `proxy.exe`, `tun2socks.exe`, `wintun.dll`, `config.yml`, `README.md`
+- macOS: `client`, `server`, `proxy`, `tun2socks`, `config.yml`, `README.md`
+
+## Git Workflow Note
+
+- `.opencode/` directory is gitignored. Do NOT `git add` it.
+- If `.opencode/` was previously committed, use `git rm -r --cached .opencode/` to untrack it, then commit and push.
 
 ## WebSocket Multiplexing Protocol
 
@@ -47,20 +69,3 @@ UDP payload: `[2B host_len][host bytes][2B port][data]`
 | `setup_tun.sh` | `sudo ./setup_tun.sh` | Configures tun0 with fake-ip range (198.18.0.0/16) |
 | `run_client.sh` | `sudo ./run_client.sh [-- CLIENT_ARGS]` | Runs client with uid-based route isolation |
 | `run_tun2socks.sh` | `./run_tun2socks.sh [TUN2SOCKS_PATH]` | Starts tun2socks connecting to local SOCKS5 |
-
-## Release Workflow
-
-```bash
-cargo build --release --manifest-path client/Cargo.toml
-cargo build --release --manifest-path server/Cargo.toml
-
-gh release delete beta0.1 --repo kurashizu/socks5-proxy --yes
-gh release create beta0.1 --title "beta0.1" --notes "..." --repo kurashizu/socks5-proxy
-gh release upload beta0.1 client/target/release/client server/target/release/server --repo kurashizu/socks5-proxy
-```
-
-## Key Files
-
-- `client/src/main.rs` — SOCKS5 server, Mux with auto-reconnect, TCP/UDP handling
-- `server/src/main.rs` — WebSocket accept, demux, TCP streams, UDP relay
-- `scripts/proxy.sh` — Full TUN proxy launcher with routing isolation

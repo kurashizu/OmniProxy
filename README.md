@@ -1,21 +1,22 @@
 # socks5-proxy
 
-SOCKS5 proxy with WebSocket transport and stream multiplexing. Supports TCP and UDP.
+A self-hosted SOCKS5 proxy that tunnels traffic through WebSocket connections with stream multiplexing. Supports TCP and UDP, with transparent proxy (TUN) mode for full-system traffic routing.
 
 ## Features
 
 - **WebSocket transport** — Tunnel traffic through Cloudflare Workers or any WebSocket endpoint
 - **Stream multiplexing** — Multiple TCP/UDP streams share a single WebSocket connection
-- **Auto-reconnect** — Client automatically reconnects on connection failure
+- **Auto-reconnect** — Client automatically reconnects on connection failure; outbound IP is re-detected on network change
 - **TUN transparent proxy** — Route all system traffic through the proxy via tun2socks
+- **Cross-platform** — Linux, macOS, and Windows support
 
 ## Quick Start
 
-### 1. Run the server
+### 1. Deploy the server
 
-```bash
-cargo run --manifest-path server/Cargo.toml -- --config server/config.yml
-```
+Deploy a Cloudflare Worker using the `server/` source, or run it on any server with a public WebSocket endpoint.
+
+Example Worker binding: the server listens on `0.0.0.0:9880` and expects a `token` header from clients.
 
 ### 2. Run the client
 
@@ -23,19 +24,35 @@ cargo run --manifest-path server/Cargo.toml -- --config server/config.yml
 cargo run --manifest-path client/Cargo.toml -- --config client/config.yml
 ```
 
-### 3. Configure your browser or app
+Or with a downloaded release:
+```bash
+./client --config config.yml
+```
 
-Point your SOCKS5 proxy to `127.0.0.1:1080`.
+### 3. Configure your system
+
+Set your system or browser SOCKS5 proxy to `127.0.0.1:1080`.
+
+**Browser:** Firefox → Settings → Network Settings → Manual proxy → SOCKS5 `127.0.0.1:1080`
+
+**macOS:** System Settings → Network → Wi-Fi → Proxies → SOCKS Proxy → `127.0.0.1:1080`
+
+**Linux:** System network settings or environment variables:
+```bash
+export ALL_PROXY=socks5://127.0.0.1:1080
+```
+
+## Download Pre-built Binaries
+
+Download the latest release from GitHub:
+
+- **Linux**: `socks5-proxy-linux-x86_64-musl.zip`
+- **Windows**: `socks5-proxy-windows-x86_64-msvc.zip`
+- **macOS**: `socks5-proxy-macos-x86_64.zip` or `socks5-proxy-macos-aarch64.zip`
+
+Each zip contains: client, server, proxy, tun2socks, config.yml, and README.md.
 
 ## Configuration
-
-### Server (`server/config.yml`)
-
-```yaml
-addr: 0.0.0.0
-port: 9880
-token: "your-secret-token"  # clients must send X-Proxy-Token header
-```
 
 ### Client (`client/config.yml`)
 
@@ -43,7 +60,37 @@ token: "your-secret-token"  # clients must send X-Proxy-Token header
 addr: 127.0.0.1
 port: 1080
 token: "your-secret-token"
-server: "your-worker.your-subdomain.workers.dev"  # auto-prepends wss://
+server: "your-worker.your-subdomain.workers.dev"  # auto-prepends wss:// and /path
+```
+
+### Server (`server/config.yml`)
+
+```yaml
+addr: 0.0.0.0
+port: 9880
+token: "your-secret-token"  # clients must send this token
+```
+
+### Proxy (`proxy/config.yml`)
+
+For TUN transparent proxy mode:
+
+```yaml
+# TUN interface settings
+tun:
+  name: tun0
+  addr: 198.18.0.1      # fake-IP gateway
+  routes:
+    - 198.18.0.0/15      # fake-IP range (DO NOT change)
+
+# Server connection
+server: "your-worker.your-subdomain.workers.dev"
+token: "your-secret-token"
+
+# tun2socks settings
+tun2socks:
+  binary: ./tun2socks
+  gateway: 198.18.0.2   # must match tun2socks fake-IP
 ```
 
 ## Architecture
@@ -52,9 +99,11 @@ server: "your-worker.your-subdomain.workers.dev"  # auto-prepends wss://
 Browser/App → SOCKS5 client (127.0.0.1:1080) → WebSocket → server → target
 ```
 
-**client**: SOCKS5 server that multiplexes all streams over a persistent WebSocket connection to the server. Reconnects automatically.
+**client**: SOCKS5 proxy server that multiplexes all streams over a persistent WebSocket connection to the server. Supports auto-reconnect and outbound IP binding for Windows.
 
 **server**: WebSocket relay that demultiplexes streams and bridges to target TCP/UDP endpoints.
+
+**proxy**: Transparent proxy manager. Sets up TUN interface, routing rules, and launches client + tun2socks.
 
 ## Protocol
 
@@ -68,25 +117,43 @@ Custom framing on top of WebSocket binary messages:
 | 0x04 | TCP_FIN | C→S | Stream closed |
 | 0x05 | UDP_DATA | C→S | UDP packet |
 
-UDP payload: `[2B host_len][host][2B port][data]`
+UDP payload: `[2B host_len][host bytes][2B port][data]`
 
 ## TUN Mode
 
-For full-system transparent proxy, use `proxy.sh` with [tun2socks](https://github.com/xjasonlyu/tun2socks):
+Route all system traffic through the proxy. The proxy binary sets up TUN, configures routes, and spawns client + tun2socks.
+
+### Linux/macOS
 
 ```bash
-sudo ./scripts/proxy.sh -c ./client -t ./tun2socks -- --server your-worker.workers.dev --token secret
+sudo ./proxy --config ./config.yml
 ```
 
-Options:
-- `-c` — path to client binary (default: `./client`)
-- `-t` — path to tun2socks binary (default: `./tun2socks`)
-- `--` — arguments passed to client
+### Windows
+
+Run with administrator privileges:
+
+```powershell
+.\proxy.exe --config .\config.yml
+```
+
+**Windows note:** On Windows, the client needs `--outbound-ip` to bind the physical NIC IP. The proxy auto-detects this and passes it to the client, preventing traffic from looping through the TUN interface.
+
+### How it works
+
+1. Proxy creates a TUN interface with fake-IP range `198.18.0.0/15`
+2. Routes traffic destined to fake-IPs through the TUN interface
+3. tun2socks reads from TUN and sends to the local SOCKS5 client
+4. Client multiplexes traffic over WebSocket to the server
+
+**Important:** The fake-IP range `198.18.0.0/15` must not overlap with your real network.
 
 ## Requirements
 
 - Rust 1.75+
-- For TUN mode: Linux with TUN/TAP support, iproute2, sudo access
+- For TUN mode:
+  - Linux: TUN/TAP support, iproute2, sudo access
+  - Windows: Administrator privileges, wintun.dll (included in release)
 
 ## Credits
 

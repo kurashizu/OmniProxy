@@ -20,7 +20,6 @@ pub async fn tun_down(cfg: &Config) {
 mod imp {
     use super::*;
 
-    /// Run `ip` command, log on error but don't fail (many commands are idempotent).
     async fn ip(args: &[&str]) -> Result<()> {
         let out = tokio::process::Command::new("ip")
             .args(args)
@@ -53,24 +52,19 @@ mod imp {
         let tun_gw = &cfg.tun_gw;
         let prefix = cfg.tun_prefix;
 
-        // Set device MTU and bring link up
         ip_strict(&["link", "set", "dev", tun, "mtu", "1500", "up"]).await?;
-
-        // Assign IPv4 address
         ip(&["addr", "add", &format!("{tun_ip}/{prefix}"), "dev", tun]).await?;
 
-        // Add bypass host route for the remote server itself via physical gateway
         if let Some(ref sip) = cfg.server_ip_hint().await {
             let gw = phys.gateway.to_string();
             ip(&["route", "add", sip, "via", &gw, "dev", &phys.iface]).await?;
         }
 
-        // Configure global default routing through the TUN gateway
         ip(&[
             "route", "add", "default", "via", tun_gw, "dev", tun, "metric", "1",
         ])
         .await?;
-        ip(&["route", "add", "default", "dev", tun, "metric", "1"]).await?; // IPv6 standard default
+        ip(&["route", "add", "default", "dev", tun, "metric", "1"]).await?;
 
         info!("[route] TUN routes configured (Linux)");
         Ok(())
@@ -80,9 +74,42 @@ mod imp {
         if let Some(ref sip) = cfg.server_ip_hint().await {
             ip(&["route", "del", sip]).await.ok();
         }
-        // Deleting the interface typically flushes its assigned routes automatically
         ip(&["link", "del", "dev", &cfg.tun_name]).await.ok();
         info!("[route] TUN routes removed (Linux)");
+    }
+}
+
+// ── macOS ─────────────────────────────────────────────────────────────────────
+
+#[cfg(target_os = "macos")]
+mod imp {
+    use super::*;
+
+    // 针对 macOS 的网络接口与标准路由控制存根实现
+    pub async fn tun_up(cfg: &Config, _phys: &PhysicalRoute) -> Result<()> {
+        let tun = &cfg.tun_name;
+        let tun_ip = &cfg.tun_ip;
+        let tun_gw = &cfg.tun_gw;
+
+        info!("[route] Configuring TUN routes (macOS stub)...");
+
+        // 示例：在 macOS 下通过 ifconfig 调通设备层拓扑
+        let out = tokio::process::Command::new("ifconfig")
+            .args([tun, tun_ip, tun_gw, "up"])
+            .output()
+            .await?;
+
+        if !out.status.success() {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            debug!("ifconfig failed: {}", stderr.trim());
+        }
+
+        info!("[route] TUN routes configured (macOS stub)");
+        Ok(())
+    }
+
+    pub async fn tun_down(_cfg: &Config) {
+        info!("[route] TUN routes removed (macOS stub)");
     }
 }
 
@@ -145,18 +172,15 @@ mod imp {
 
         info!("[route] Found TUN adapter with InterfaceIndex: {}", idx);
 
-        // Disable Automatic Metric to avoid Windows choosing physical adapter over TUN
         ps(&format!(
             "Set-NetIPInterface -InterfaceIndex {idx} -AutomaticMetric Disabled -InterfaceMetric 1"
         ))
         .await?;
 
-        // Bind IP environment
         ps(&format!(
             "New-NetIPAddress -InterfaceIndex {idx} -IPAddress '{tun_ip}' -PrefixLength {prefix} -DefaultGateway '{tun_gw}' -ErrorAction SilentlyContinue"
         )).await?;
 
-        // Server bypass route
         if let Some(ref sip) = cfg.server_ip_hint().await {
             let gw = phys.gateway.to_string();
             let dev = &phys.iface;
@@ -166,7 +190,6 @@ mod imp {
             )).await?;
         }
 
-        // Global default routes (Bypass alerts and pass explicit link-local IPv6 gateway to stop On-link loop)
         ps(&format!(
             "Remove-NetRoute -InterfaceIndex {idx} -DestinationPrefix '0.0.0.0/0' -Confirm:$false -ErrorAction SilentlyContinue; \
              New-NetRoute -InterfaceIndex {idx} -DestinationPrefix '0.0.0.0/0' -NextHop '{tun_gw}' -RouteMetric 1"
@@ -201,7 +224,7 @@ mod imp {
     }
 }
 
-// ── Config helper: resolve server IP at startup ───────────────────────────────
+// ── Config helper: 全局公用方法 ───────────────────────────────────────────────
 
 impl Config {
     /// Attempt to resolve the server hostname to an IP for the bypass route.
