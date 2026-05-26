@@ -156,6 +156,19 @@ mod imp {
 mod imp {
     use super::*;
 
+    async fn route(args: &[&str]) {
+        let out = tokio::process::Command::new("route")
+            .args(args)
+            .output()
+            .await;
+        if let Ok(out) = out {
+            if !out.status.success() {
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                debug!("route {} → {}", args.join(" "), stderr.trim());
+            }
+        }
+    }
+
     // 针对 macOS 的网络接口与标准路由控制实现
     pub async fn tun_up(cfg: &Config, _phys: &PhysicalRoute) -> Result<()> {
         let tun = &cfg.tun_name;
@@ -167,8 +180,9 @@ mod imp {
 
         info!("[route] Configuring TUN routes (macOS)...");
 
+        // macOS requires local and destination to be the same for utun
         let out = tokio::process::Command::new("ifconfig")
-            .args([tun, tun_ip, tun_gw, "up"])
+            .args([tun, tun_ip, tun_ip, "up"])
             .output()
             .await?;
 
@@ -184,24 +198,35 @@ mod imp {
             .await
             .ok();
 
-        // Default routes (IPv4 + IPv6)
-        tokio::process::Command::new("route")
-            .args(["-n", "add", "default", tun_gw])
-            .output()
-            .await
-            .ok();
-        tokio::process::Command::new("route")
-            .args(["-n", "add", "-inet6", "default", tun_gw6])
-            .output()
-            .await
-            .ok();
+        // Bypass route for server (IPv4 + IPv6)
+        if let Some(ref sip) = cfg.server_ip_hint_v4().await {
+            let gw = _phys.gateway.to_string();
+            route(&["-n", "add", "-host", sip, &gw]).await;
+        }
+        if let Some(ref sip6) = cfg.server_ip_hint_v6().await {
+            let gw6 = _phys.gateway.to_string();
+            route(&["-n", "add", "-inet6", "-host", sip6, &gw6]).await;
+        }
+
+        // Split tunneling default routes (IPv4)
+        // Using /1 routes instead of default to avoid conflicts with physical default gateway
+        route(&["-n", "add", "-net", "0.0.0.0/1", tun_gw]).await;
+        route(&["-n", "add", "-net", "128.0.0.0/1", tun_gw]).await;
+
+        // Split tunneling default routes (IPv6)
+        route(&["-n", "add", "-inet6", "-net", "::/1", tun_gw6]).await;
+        route(&["-n", "add", "-inet6", "-net", "8000::/1", tun_gw6]).await;
 
         info!("[route] TUN routes configured (macOS)");
         Ok(())
     }
 
     pub async fn tun_down(_cfg: &Config) {
-        // Best-effort cleanup; rely on interface teardown if route commands fail
+        // Clean up split tunneling routes
+        route(&["-n", "delete", "-net", "0.0.0.0/1"]).await;
+        route(&["-n", "delete", "-net", "128.0.0.0/1"]).await;
+        route(&["-n", "delete", "-inet6", "-net", "::/1"]).await;
+        route(&["-n", "delete", "-inet6", "-net", "8000::/1"]).await;
         info!("[route] TUN routes removed (macOS)");
     }
 }
