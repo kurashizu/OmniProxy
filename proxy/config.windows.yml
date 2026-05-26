@@ -36,4 +36,4 @@ tun_gw6: "fd00::2"
 # Kept commented out to trigger the automatic detection logic.
 # The manager will automatically query the active Windows network adapters
 # to find your primary physical internet gateway (e.g., Wi-Fi or Ethernet).
-# phys_iface: ""
+phys_iface: ""

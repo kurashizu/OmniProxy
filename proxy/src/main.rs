@@ -225,9 +225,8 @@ async fn run_stack(cfg: Arc<Config>, phys: PhysicalRoute) -> Result<()> {
         "--port".to_string(),
         cfg.socks_port.to_string(),
     ];
-    // Windows 需要绑定物理网卡 IP，避免流量进入 TUN 回环
-    #[cfg(windows)]
-    {
+    // 如果指定了物理网卡 IP（多用于 Windows），则绑定出站 IP，避免流量进入 TUN 回环
+    if cfg.phys_iface.is_some() {
         client_args.push("--outbound-ip".to_string());
         client_args.push(phys.ip.to_string());
     }

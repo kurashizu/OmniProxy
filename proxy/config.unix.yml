@@ -34,4 +34,4 @@ tun_gw6: "fd00::2"
 # Kept commented out to trigger the automatic detection logic.
 # On Linux, it parses /proc/net/route; on macOS, it parses netstat.
 # It automatically targets your primary outbound interface (e.g., eth0, wlan0, en0).
-# phys_iface: ""
+phys_iface: ""
