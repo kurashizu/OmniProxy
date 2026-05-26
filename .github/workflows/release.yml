@@ -13,32 +13,32 @@ jobs:
                     - target: x86_64-pc-windows-msvc
                       os: windows-latest
                       ext: .exe
-                      zip: socks5-proxy-windows-x86_64-msvc.zip
+                      zip: omni-proxy-windows-x86_64-msvc.zip
 
                     - target: aarch64-pc-windows-msvc
                       os: windows-11-arm
                       ext: .exe
-                      zip: socks5-proxy-windows-aarch64-msvc.zip
+                      zip: omni-proxy-windows-aarch64-msvc.zip
 
                     - target: x86_64-unknown-linux-musl
                       os: ubuntu-latest
                       ext: ""
-                      zip: socks5-proxy-linux-x86_64-musl.zip
+                      zip: omni-proxy-linux-x86_64-musl.zip
 
                     - target: aarch64-unknown-linux-musl
                       os: ubuntu-24.04-arm
                       ext: ""
-                      zip: socks5-proxy-linux-aarch64-musl.zip
+                      zip: omni-proxy-linux-aarch64-musl.zip
 
                     - target: x86_64-apple-darwin
                       os: macos-latest
                       ext: ""
-                      zip: socks5-proxy-macos-x86_64.zip
+                      zip: omni-proxy-macos-x86_64.zip
 
                     - target: aarch64-apple-darwin
                       os: macos-latest
                       ext: ""
-                      zip: socks5-proxy-macos-aarch64.zip
+                      zip: omni-proxy-macos-aarch64.zip
 
         runs-on: ${{ matrix.os }}
 

@@ -1,5 +1,5 @@
 #!/bin/bash
-# macOS Gatekeeper bypass for socks5-proxy binaries
+# macOS Gatekeeper bypass for OmniProxy binaries
 # Run once after extracting the release zip.
 # Usage: chmod +x setup_macos.sh && ./setup_macos.sh
 
@@ -8,7 +8,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BINARIES=("client" "server" "proxy" "tun2socks")
 
-echo "=== macOS Security Setup for socks5-proxy ==="
+echo "=== macOS Security Setup for OmniProxy ==="
 echo ""
 
 # 1. Remove quarantine attribute

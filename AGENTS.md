@@ -1,4 +1,4 @@
-# SOCKS5 Proxy — Agent Notes
+# OmniProxy — Agent Notes
 
 ## Project Structure
 
@@ -26,7 +26,7 @@ cargo run --manifest-path proxy/Cargo.toml -- --config proxy/config.macos.yml
 
 Push a tag starting with `v` to trigger GitHub Actions:
 ```bash
-git add -A && git commit -m "..." && git tag v1.0.0-beta.X && git push origin master && git push origin v1.0.0-beta.X
+git add -A && git commit -m "..." && git tag v1.0.0-rc.1 && git push origin master && git push origin v1.0.0-rc.1
 ```
 
 GitHub Actions builds all packages for all platforms (Linux/macOS/Windows), downloads tun2socks + wintun, and uploads zip archives to the release.
@@ -35,16 +35,6 @@ Release zip contents:
 - Linux: `client`, `server`, `proxy`, `tun2socks`, `config.yml`, `README.md`
 - Windows: `client.exe`, `server.exe`, `proxy.exe`, `tun2socks.exe`, `wintun.dll`, `config.yml`, `README.md`
 - macOS: `client`, `server`, `proxy`, `tun2socks`, `config.yml`, `README.md`, `setup_macos.sh`
-
-## Scripts (`scripts/`)
-
-| Script | Usage | Description |
-|--------|-------|-------------|
-| `proxy.sh` | `sudo ./proxy.sh [OPTIONS] -- [CLIENT_ARGS]` | One-shot launcher: TUN + routing isolation + client + tun2socks |
-| `setup_tun.sh` | `sudo ./setup_tun.sh` | Configures tun0 with fake-ip range (198.18.0.0/16) |
-| `run_client.sh` | `sudo ./run_client.sh [-- CLIENT_ARGS]` | Runs client with uid-based route isolation |
-| `run_tun2socks.sh` | `./run_tun2socks.sh [TUN2SOCKS_PATH]` | Starts tun2socks connecting to local SOCKS5 |
-| `setup_macos.sh` | `./setup_macos.sh` | macOS Gatekeeper bypass: removes quarantine, ad-hoc signs binaries |
 
 ## Git Workflow Note
 
@@ -71,3 +61,21 @@ UDP payload: `[2B host_len][host bytes][2B port][data]`
 - Client raises `RLIMIT_NOFILE` to 65535 on startup
 - Server uses `DashMap` for stream state, client uses `RwLock<HashMap>`
 - UDP relay on server shares a single `UdpSocket` across all streams
+
+## Platform-Specific TUN Behavior
+
+| Platform | TUN Name | Routing Method | Gateway Required |
+|----------|----------|----------------|------------------|
+| Linux | `tun0` | `ip route add default dev tun0` | No |
+| macOS | `utun100` | Split tunneling (`0.0.0.0/1` + `128.0.0.0/1`) | No (uses `tun_ip`) |
+| Windows | `tun0` | `New-NetIPAddress -DefaultGateway` | Yes (`tun_gw`) |
+
+## Scripts (`scripts/`)
+
+| Script | Usage | Description |
+|--------|-------|-------------|
+| `proxy.sh` | `sudo ./proxy.sh [OPTIONS] -- [CLIENT_ARGS]` | One-shot launcher: TUN + routing isolation + client + tun2socks |
+| `setup_tun.sh` | `sudo ./setup_tun.sh` | Configures tun0 with fake-ip range (198.18.0.0/16) |
+| `run_client.sh` | `sudo ./run_client.sh [-- CLIENT_ARGS]` | Runs client with uid-based route isolation |
+| `run_tun2socks.sh` | `./run_tun2socks.sh [TUN2SOCKS_PATH]` | Starts tun2socks connecting to local SOCKS5 |
+| `setup_macos.sh` | `./setup_macos.sh` | macOS Gatekeeper bypass: removes quarantine, ad-hoc signs binaries |

@@ -1,6 +1,6 @@
-# socks5-proxy
+# OmniProxy
 
-A self-hosted SOCKS5 proxy that tunnels traffic through WebSocket connections with stream multiplexing. Supports TCP and UDP, with transparent proxy (TUN) mode for full-system traffic routing.
+A self-hosted transparent proxy suite that tunnels all system traffic through encrypted WebSocket connections with stream multiplexing. Supports TCP/UDP, with full-system TUN mode for seamless traffic routing.
 
 ## Features
 
@@ -46,9 +46,9 @@ export ALL_PROXY=socks5://127.0.0.1:1080
 
 Download the latest release from GitHub:
 
-- **Linux**: `socks5-proxy-linux-x86_64-musl.zip`
-- **Windows**: `socks5-proxy-windows-x86_64-msvc.zip`
-- **macOS**: `socks5-proxy-macos-x86_64.zip` or `socks5-proxy-macos-aarch64.zip`
+- **Linux**: `omni-proxy-linux-x86_64-musl.zip`
+- **Windows**: `omni-proxy-windows-x86_64-msvc.zip`
+- **macOS**: `omni-proxy-macos-x86_64.zip` or `omni-proxy-macos-aarch64.zip`
 
 Each zip contains: `client`, `server`, `proxy`, `tun2socks`, `config.yml`, `README.md`, and `setup_macos.sh` (macOS only).
 
@@ -92,18 +92,15 @@ token: "your-secret-token"
 socks_port: 1080
 
 # TUN interface settings
-tun_name: "tun0"
-tun_ip: "198.18.0.1"       # TUN virtual IP
-tun_prefix: 16              # CIDR prefix (198.18.0.0/16)
-tun_gw: "198.18.0.2"        # TUN gateway (fake-IP gateway)
+tun_name: "tun0"          # Linux: tun0 | macOS: utun100 | Windows: tun0
+tun_ip: "198.18.0.1"      # TUN virtual IP
+tun_prefix: 16            # CIDR prefix (198.18.0.0/16)
 
 # IPv6 TUN settings
 tun_ip6: "fd00::1"
 tun_prefix6: 64
-tun_gw6: "fd00::2"
 
 # Physical interface (optional — leave empty for auto-detect)
-# On Linux: parses /proc/net/route; on macOS: netstat; on Windows: PowerShell
 phys_iface: ""
 ```
 
@@ -113,7 +110,7 @@ phys_iface: ""
 Browser/App → SOCKS5 client (127.0.0.1:1080) → WebSocket → server → target
 ```
 
-**client**: SOCKS5 proxy server that multiplexes all streams over a persistent WebSocket connection to the server. Supports auto-reconnect and outbound IP binding for Windows.
+**client**: SOCKS5 proxy server that multiplexes all streams over a persistent WebSocket connection to the server. Supports auto-reconnect and outbound IP binding.
 
 **server**: WebSocket relay that demultiplexes streams and bridges to target TCP/UDP endpoints.
 
@@ -167,6 +164,7 @@ Run with administrator privileges:
 - Rust 1.75+
 - For TUN mode:
   - Linux: TUN/TAP support, iproute2, sudo access
+  - macOS: sudo access, utun interface support (macOS 10.13+)
   - Windows: Administrator privileges, wintun.dll (included in release)
 
 ## Credits
