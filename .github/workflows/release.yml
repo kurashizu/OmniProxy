@@ -10,10 +10,10 @@ jobs:
     strategy:
       matrix:
         include:
-          - target: x86_64-pc-windows-gnu
+          - target: x86_64-pc-windows-msvc
             os: windows-latest
             ext: .exe
-            zip: socks5-proxy-windows-x86_64-gnu.zip
+            zip: socks5-proxy-windows-x86_64-msvc.zip
           - target: x86_64-unknown-linux-musl
             os: ubuntu-latest
             ext: ""
@@ -34,12 +34,6 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: sudo apt-get update && sudo apt-get install -y musl-tools
 
-      - name: Install mingw
-        if: matrix.os == 'windows-latest'
-        run: |
-          rustup target add x86_64-pc-windows-gnu
-        shell: bash
-
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
         with:
@@ -49,6 +43,8 @@ jobs:
 
       # ── Build ───────────────────────────────────────────────────────────────
       - name: Build client
+        env:
+          RUSTFLAGS: ${{ matrix.os == 'windows-latest' && '-Ctarget-feature=+crt-static' || '' }}
         run: |
           cargo build --release --manifest-path client/Cargo.toml --target ${{ matrix.target }}
           mkdir -p dist
@@ -56,6 +52,8 @@ jobs:
         shell: bash
 
       - name: Build server
+        env:
+          RUSTFLAGS: ${{ matrix.os == 'windows-latest' && '-Ctarget-feature=+crt-static' || '' }}
         run: |
           cargo build --release --manifest-path server/Cargo.toml --target ${{ matrix.target }}
           mkdir -p dist
@@ -135,7 +133,7 @@ jobs:
       - name: Download Windows
         uses: actions/download-artifact@v4
         with:
-          name: socks5-proxy-windows-x86_64-gnu.zip
+          name: socks5-proxy-windows-x86_64-msvc.zip
           path: .
 
       - name: Upload to release
