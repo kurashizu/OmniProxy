@@ -189,24 +189,21 @@ mod imp {
             .await
             .ok();
 
-        // Bypass route for server (IPv4 + IPv6)
+        // Bypass route for server (use interface to support both IPv4/IPv6)
         if let Some(ref sip) = cfg.server_ip_hint_v4().await {
-            let gw = _phys.gateway.to_string();
-            route(&["-n", "add", "-host", sip, &gw]).await;
+            route(&["-n", "add", "-host", sip, "-interface", &_phys.iface]).await;
         }
         if let Some(ref sip6) = cfg.server_ip_hint_v6().await {
-            let gw6 = _phys.gateway.to_string();
-            route(&["-n", "add", "-inet6", "-host", sip6, &gw6]).await;
+            route(&["-n", "add", "-inet6", "-host", sip6, "-interface", &_phys.iface]).await;
         }
 
         // Split tunneling default routes (IPv4)
-        // Using /1 routes instead of default to avoid conflicts with physical default gateway
         route(&["-n", "add", "-net", "0.0.0.0/1", tun_ip]).await;
         route(&["-n", "add", "-net", "128.0.0.0/1", tun_ip]).await;
 
-        // Split tunneling default routes (IPv6)
-        route(&["-n", "add", "-inet6", "-net", "::/1", tun_ip6]).await;
-        route(&["-n", "add", "-inet6", "-net", "8000::/1", tun_ip6]).await;
+        // Split tunneling default routes (IPv6) - must use interface, not IPv4 address
+        route(&["-n", "add", "-inet6", "-net", "::/1", "-interface", tun]).await;
+        route(&["-n", "add", "-inet6", "-net", "8000::/1", "-interface", tun]).await;
 
         info!("[route] TUN routes configured (macOS)");
         Ok(())
