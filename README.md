@@ -50,9 +50,11 @@ Download the latest release from GitHub:
 - **Windows**: `socks5-proxy-windows-x86_64-msvc.zip`
 - **macOS**: `socks5-proxy-macos-x86_64.zip` or `socks5-proxy-macos-aarch64.zip`
 
-Each zip contains: `client`, `server`, `proxy`, `tun2socks`, `config.yml`, and `README.md`.
+Each zip contains: `client`, `server`, `proxy`, `tun2socks`, `config.yml`, `README.md`, and `setup_macos.sh` (macOS only).
 
 **One-time setup:** Extract the zip to any directory. Edit `config.yml` once — all binaries (`client`, `tun2socks`) are resolved relative to the `proxy` binary location, so no path changes needed.
+
+**macOS:** Run `./setup_macos.sh` once to bypass Gatekeeper security restrictions (removes quarantine attributes and ad-hoc signs binaries).
 
 ## Configuration
 

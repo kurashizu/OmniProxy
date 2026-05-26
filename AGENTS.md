@@ -33,7 +33,17 @@ GitHub Actions builds all packages for all platforms (Linux/macOS/Windows), down
 Release zip contents:
 - Linux: `client`, `server`, `proxy`, `tun2socks`, `config.yml`, `README.md`
 - Windows: `client.exe`, `server.exe`, `proxy.exe`, `tun2socks.exe`, `wintun.dll`, `config.yml`, `README.md`
-- macOS: `client`, `server`, `proxy`, `tun2socks`, `config.yml`, `README.md`
+- macOS: `client`, `server`, `proxy`, `tun2socks`, `config.yml`, `README.md`, `setup_macos.sh`
+
+## Scripts (`scripts/`)
+
+| Script | Usage | Description |
+|--------|-------|-------------|
+| `proxy.sh` | `sudo ./proxy.sh [OPTIONS] -- [CLIENT_ARGS]` | One-shot launcher: TUN + routing isolation + client + tun2socks |
+| `setup_tun.sh` | `sudo ./setup_tun.sh` | Configures tun0 with fake-ip range (198.18.0.0/16) |
+| `run_client.sh` | `sudo ./run_client.sh [-- CLIENT_ARGS]` | Runs client with uid-based route isolation |
+| `run_tun2socks.sh` | `./run_tun2socks.sh [TUN2SOCKS_PATH]` | Starts tun2socks connecting to local SOCKS5 |
+| `setup_macos.sh` | `./setup_macos.sh` | macOS Gatekeeper bypass: removes quarantine, ad-hoc signs binaries |
 
 ## Git Workflow Note
 
@@ -60,12 +70,3 @@ UDP payload: `[2B host_len][host bytes][2B port][data]`
 - Client raises `RLIMIT_NOFILE` to 65535 on startup
 - Server uses `DashMap` for stream state, client uses `RwLock<HashMap>`
 - UDP relay on server shares a single `UdpSocket` across all streams
-
-## Scripts (`scripts/`)
-
-| Script | Usage | Description |
-|--------|-------|-------------|
-| `proxy.sh` | `sudo ./proxy.sh [OPTIONS] -- [CLIENT_ARGS]` | One-shot launcher: TUN + routing isolation + client + tun2socks |
-| `setup_tun.sh` | `sudo ./setup_tun.sh` | Configures tun0 with fake-ip range (198.18.0.0/16) |
-| `run_client.sh` | `sudo ./run_client.sh [-- CLIENT_ARGS]` | Runs client with uid-based route isolation |
-| `run_tun2socks.sh` | `./run_tun2socks.sh [TUN2SOCKS_PATH]` | Starts tun2socks connecting to local SOCKS5 |

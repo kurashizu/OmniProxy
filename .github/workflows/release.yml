@@ -202,6 +202,7 @@ jobs:
                   cp README.md dist/ || true
                   cp tun2socks dist/ || true
                   cp proxy/config.unix.yml dist/config.yml || true
+                  cp scripts/setup_macos.sh dist/
                   zip -r ${{ matrix.zip }} dist/
               shell: bash
 
