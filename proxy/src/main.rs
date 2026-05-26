@@ -222,11 +222,15 @@ async fn run_stack(cfg: Arc<Config>, phys: PhysicalRoute) -> Result<()> {
     let mut client_args = vec![
         "--server".to_string(),
         cfg.server.clone(),
-        "--outbound-ip".to_string(),
-        phys.ip.to_string(),
         "--port".to_string(),
         cfg.socks_port.to_string(),
     ];
+    // Windows 需要绑定物理网卡 IP，避免流量进入 TUN 回环
+    #[cfg(windows)]
+    {
+        client_args.push("--outbound-ip".to_string());
+        client_args.push(phys.ip.to_string());
+    }
     if !cfg.token.is_empty() {
         client_args.push("--token".to_string());
         client_args.push(cfg.token.clone());

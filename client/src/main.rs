@@ -153,26 +153,33 @@ impl Config {
 //   Linux  → 用 uidrange 路由隔离，无需此函数
 //   Windows → proxy.ps1 传入 --outbound-ip <物理网卡IP>
 
-fn detect_outbound_ip(server_addr: SocketAddr) -> Option<IpAddr> {
-    let probe_addr: SocketAddr = match server_addr {
-        SocketAddr::V4(_) => "0.0.0.0:0".parse().unwrap(),
-        SocketAddr::V6(_) => "[::]:0".parse().unwrap(),
-    };
-    let sock = std::net::UdpSocket::bind(probe_addr).ok()?;
-    sock.connect(server_addr).ok()?;
-    Some(sock.local_addr().ok()?.ip())
+fn detect_outbound_ip(addrs: &[SocketAddr]) -> Option<IpAddr> {
+    for addr in addrs {
+        let probe_addr: SocketAddr = match addr {
+            SocketAddr::V4(_) => "0.0.0.0:0".parse().unwrap(),
+            SocketAddr::V6(_) => "[::]:0".parse().unwrap(),
+        };
+        let sock = std::net::UdpSocket::bind(probe_addr).ok()?;
+        if sock.connect(addr).is_ok() {
+            if let Ok(local) = sock.local_addr() {
+                return Some(local.ip());
+            }
+        }
+    }
+    None
 }
 
 // ── 服务器信息（启动时解析 DNS 一次）────────────────────────────────────────
 
 #[derive(Debug, Clone)]
 struct ServerInfo {
-    /// 缓存的服务器 IP:Port
-    addr: SocketAddr,
+    /// 解析出的服务器地址列表（IPv6 优先，失败自动回退到 IPv4）
+    addrs: Vec<SocketAddr>,
     /// 原始域名，TLS SNI 用
     host: String,
     scheme: String,
     path: String,
+    port: u16,
     token: String,
     /// 出站绑定 IP（None = 不绑定，走系统默认路由）
     outbound_ip: Option<IpAddr>,
@@ -195,13 +202,18 @@ impl ServerInfo {
             url.path().to_string()
         };
 
-        let addr = tokio::net::lookup_host(format!("{host}:{port}"))
+        let mut addrs: Vec<SocketAddr> = tokio::net::lookup_host(format!("{host}:{port}"))
             .await
             .with_context(|| format!("DNS lookup failed: {host}"))?
-            .next()
-            .with_context(|| format!("no addr for {host}"))?;
+            .collect();
+        if addrs.is_empty() {
+            anyhow::bail!("no addr for {host}");
+        }
+        // Prefer IPv6 first
+        addrs.sort_by_key(|a| matches!(a, SocketAddr::V4(_)) as u8);
+        addrs.dedup();
 
-        info!("resolved {host}:{port} → {addr}");
+        info!("resolved {host}:{port} → {addrs:?}");
 
         // 解析 outbound_ip
         let outbound_ip = if let Some(ref ip_str) = cfg.outbound_ip {
@@ -215,10 +227,11 @@ impl ServerInfo {
         };
 
         Ok(ServerInfo {
-            addr,
+            addrs,
             host,
             scheme,
             path,
+            port,
             token: cfg.token.clone(),
             outbound_ip,
         })
@@ -226,10 +239,10 @@ impl ServerInfo {
 
     fn host_header(&self) -> String {
         let def = if self.scheme == "wss" { 443u16 } else { 80u16 };
-        if self.addr.port() == def {
+        if self.port == def {
             self.host.clone()
         } else {
-            format!("{}:{}", self.host, self.addr.port())
+            format!("{}:{}", self.host, self.port)
         }
     }
 }
@@ -242,28 +255,6 @@ async fn build_ws(srv: &ServerInfo) -> Result<WsStream> {
     use rustls::pki_types::ServerName;
     use tokio_rustls::TlsConnector;
 
-    // ── TCP 连接（可选绑定源 IP）──────────────────────────────────────────────
-    let tcp = if let Some(outbound_ip) = srv.outbound_ip {
-        // bind 物理网卡 IP → 内核强制从该网卡出去，不走 TUN
-        let socket = match outbound_ip {
-            IpAddr::V4(_) => tokio::net::TcpSocket::new_v4()?,
-            IpAddr::V6(_) => tokio::net::TcpSocket::new_v6()?,
-        };
-        socket
-            .bind(SocketAddr::new(outbound_ip, 0))
-            .with_context(|| format!("bind outbound_ip {outbound_ip}: IP可能已失效(网络切换?)"))?;
-        socket
-            .connect(srv.addr)
-            .await
-            .with_context(|| format!("tcp connect to {} via {outbound_ip}", srv.addr))?
-    } else {
-        // 不绑定，走系统路由（Linux uidrange 隔离场景）
-        TcpStream::connect(srv.addr)
-            .await
-            .with_context(|| format!("tcp connect to {}", srv.addr))?
-    };
-
-    // ── TLS（SNI = 域名，不是 IP）────────────────────────────────────────────
     let tls_config = Arc::new(
         rustls::ClientConfig::builder()
             .with_root_certificates(rustls::RootCertStore {
@@ -275,27 +266,80 @@ async fn build_ws(srv: &ServerInfo) -> Result<WsStream> {
     let server_name = ServerName::try_from(srv.host.as_str())
         .with_context(|| format!("invalid server name: {}", srv.host))?
         .to_owned();
-    let tls = connector
-        .connect(server_name, tcp)
-        .await
-        .with_context(|| format!("tls handshake with {}", srv.host))?;
 
-    // ── WS 握手 ───────────────────────────────────────────────────────────────
-    let uri = format!("{}://{}{}", srv.scheme, srv.host_header(), srv.path);
-    let mut req = Request::builder()
-        .uri(&uri)
-        .header("Host", srv.host_header())
-        .header("Upgrade", "websocket")
-        .header("Connection", "Upgrade")
-        .header("Sec-WebSocket-Key", random_ws_key())
-        .header("Sec-WebSocket-Version", "13");
-    if !srv.token.is_empty() {
-        req = req.header("X-Proxy-Token", &srv.token);
+    let mut last_err: Option<anyhow::Error> = None;
+    for addr in &srv.addrs {
+        if let Some(outbound_ip) = srv.outbound_ip {
+            if matches!((outbound_ip, addr), (IpAddr::V4(_), SocketAddr::V6(_)))
+                || matches!((outbound_ip, addr), (IpAddr::V6(_), SocketAddr::V4(_)))
+            {
+                continue;
+            }
+        }
+
+        // ── TCP 连接（可选绑定源 IP）──────────────────────────────────────────
+        let tcp = if let Some(outbound_ip) = srv.outbound_ip {
+            let socket = match outbound_ip {
+                IpAddr::V4(_) => tokio::net::TcpSocket::new_v4()?,
+                IpAddr::V6(_) => tokio::net::TcpSocket::new_v6()?,
+            };
+            if let Err(e) = socket.bind(SocketAddr::new(outbound_ip, 0)) {
+                last_err = Some(anyhow::anyhow!(
+                    "bind outbound_ip {outbound_ip}: IP可能已失效(网络切换?) ({e})"
+                ));
+                continue;
+            }
+            match socket.connect(*addr).await {
+                Ok(tcp) => tcp,
+                Err(e) => {
+                    last_err = Some(anyhow::anyhow!(
+                        "tcp connect to {addr} via {outbound_ip}: {e}"
+                    ));
+                    continue;
+                }
+            }
+        } else {
+            // 不绑定，走系统路由（Linux/macOS 依赖 bypass route）
+            match TcpStream::connect(*addr).await {
+                Ok(tcp) => tcp,
+                Err(e) => {
+                    last_err = Some(anyhow::anyhow!("tcp connect to {addr}: {e}"));
+                    continue;
+                }
+            }
+        };
+
+        // ── TLS（SNI = 域名，不是 IP）────────────────────────────────────────
+        let tls = match connector.connect(server_name.clone(), tcp).await {
+            Ok(tls) => tls,
+            Err(e) => {
+                last_err = Some(anyhow::anyhow!("tls handshake with {}: {e}", srv.host));
+                continue;
+            }
+        };
+
+        // ── WS 握手 ───────────────────────────────────────────────────────────
+        let uri = format!("{}://{}{}", srv.scheme, srv.host_header(), srv.path);
+        let mut req = Request::builder()
+            .uri(&uri)
+            .header("Host", srv.host_header())
+            .header("Upgrade", "websocket")
+            .header("Connection", "Upgrade")
+            .header("Sec-WebSocket-Key", random_ws_key())
+            .header("Sec-WebSocket-Version", "13");
+        if !srv.token.is_empty() {
+            req = req.header("X-Proxy-Token", &srv.token);
+        }
+        match tokio_tungstenite::client_async(req.body(())?, tls).await {
+            Ok((ws, _)) => return Ok(ws),
+            Err(e) => {
+                last_err = Some(anyhow::anyhow!("ws handshake failed: {e}"));
+                continue;
+            }
+        }
     }
-    let (ws, _) = tokio_tungstenite::client_async(req.body(())?, tls)
-        .await
-        .context("ws handshake failed")?;
-    Ok(ws)
+
+    Err(last_err.unwrap_or_else(|| anyhow::anyhow!("no usable server address")))
 }
 
 // ── Mux 内部状态 ──────────────────────────────────────────────────────────────
@@ -372,7 +416,7 @@ impl Mux {
             Err(e) if srv.outbound_ip.is_some() => {
                 // bind 失败 → 可能是网络切换，探测新出站 IP
                 warn!("[mux] build_ws failed ({e:#}), detecting new outbound IP...");
-                let new_ip = detect_outbound_ip(srv.addr);
+                let new_ip = detect_outbound_ip(&srv.addrs);
                 if let Some(ip) = new_ip {
                     if Some(ip) != srv.outbound_ip {
                         info!("[mux] outbound IP changed: {:?} → {ip}", srv.outbound_ip);

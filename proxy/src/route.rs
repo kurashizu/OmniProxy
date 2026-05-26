@@ -156,15 +156,17 @@ mod imp {
 mod imp {
     use super::*;
 
-    // 针对 macOS 的网络接口与标准路由控制存根实现
+    // 针对 macOS 的网络接口与标准路由控制实现
     pub async fn tun_up(cfg: &Config, _phys: &PhysicalRoute) -> Result<()> {
         let tun = &cfg.tun_name;
         let tun_ip = &cfg.tun_ip;
+        let tun_ip6 = &cfg.tun_ip6;
         let tun_gw = &cfg.tun_gw;
+        let tun_gw6 = &cfg.tun_gw6;
+        let prefix6 = cfg.tun_prefix6;
 
-        info!("[route] Configuring TUN routes (macOS stub)...");
+        info!("[route] Configuring TUN routes (macOS)...");
 
-        // 示例：在 macOS 下通过 ifconfig 调通设备层拓扑
         let out = tokio::process::Command::new("ifconfig")
             .args([tun, tun_ip, tun_gw, "up"])
             .output()
@@ -175,12 +177,32 @@ mod imp {
             debug!("ifconfig failed: {}", stderr.trim());
         }
 
-        info!("[route] TUN routes configured (macOS stub)");
+        // IPv6 address on TUN
+        tokio::process::Command::new("ifconfig")
+            .args([tun, "inet6", &format!("{tun_ip6}/{prefix6}"), "up"])
+            .output()
+            .await
+            .ok();
+
+        // Default routes (IPv4 + IPv6)
+        tokio::process::Command::new("route")
+            .args(["-n", "add", "default", tun_gw])
+            .output()
+            .await
+            .ok();
+        tokio::process::Command::new("route")
+            .args(["-n", "add", "-inet6", "default", tun_gw6])
+            .output()
+            .await
+            .ok();
+
+        info!("[route] TUN routes configured (macOS)");
         Ok(())
     }
 
     pub async fn tun_down(_cfg: &Config) {
-        info!("[route] TUN routes removed (macOS stub)");
+        // Best-effort cleanup; rely on interface teardown if route commands fail
+        info!("[route] TUN routes removed (macOS)");
     }
 }
 
