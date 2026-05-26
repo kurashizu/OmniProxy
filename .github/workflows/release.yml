@@ -146,6 +146,7 @@ jobs:
               run: |
                   cp README.md dist/ || true
                   cp tun2socks dist/ || true
+                  cp proxy/config.unix.yml dist/config.yml || true
                   zip -r ${{ matrix.zip }} dist/
               shell: bash
 
@@ -154,6 +155,7 @@ jobs:
               run: |
                   cp README.md dist/ || true
                   cp tun2socks dist/ || true
+                  cp proxy/config.unix.yml dist/config.yml || true
                   zip -r ${{ matrix.zip }} dist/
               shell: bash
 
@@ -162,6 +164,7 @@ jobs:
               run: |
                   if (Test-Path README.md) { cp README.md dist/ }
                   if (Test-Path tun2socks.exe) { cp tun2socks.exe dist/ }
+                  cp proxy/config.windows.yml dist/config.yml
                   Compress-Archive -Path dist -DestinationPath ${{ matrix.zip }}
               shell: powershell
 

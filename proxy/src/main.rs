@@ -22,7 +22,6 @@ struct Cli {
     #[arg(long, short = 'c')]
     config: Option<PathBuf>,
 
-    // Inline overrides (all optional; config file takes precedence if --config given)
     #[arg(long)]
     client: Option<PathBuf>,
     #[arg(long)]
@@ -41,8 +40,6 @@ struct Cli {
     tun_prefix: Option<u8>,
     #[arg(long)]
     tun_gw: Option<String>,
-    /// Force a specific physical interface (e.g. wlan0, eth0, Ethernet).
-    /// If omitted, proxy auto-detects the non-TUN default-route interface.
     #[arg(long)]
     phys_iface: Option<String>,
 }
@@ -51,31 +48,21 @@ struct Cli {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
-    /// Path to the client binary
     pub client: PathBuf,
-    /// Path to the tun2socks binary
     pub tun2socks: PathBuf,
-    /// WS proxy server (e.g. "tunnel.example.com" or "wss://tunnel.example.com/path")
     pub server: String,
-    /// Auth token passed as X-Proxy-Token
     #[serde(default)]
     pub token: String,
-    /// Local SOCKS5 port client listens on
     #[serde(default = "default_socks_port")]
     pub socks_port: u16,
-    /// TUN interface name
     #[serde(default = "default_tun_name")]
     pub tun_name: String,
-    /// TUN virtual IP
     #[serde(default = "default_tun_ip")]
     pub tun_ip: String,
-    /// TUN prefix length
     #[serde(default = "default_tun_prefix")]
     pub tun_prefix: u8,
-    /// TUN virtual gateway (used by tun2socks)
     #[serde(default = "default_tun_gw")]
     pub tun_gw: String,
-    /// Physical interface to use. Auto-detected when absent.
     #[serde(default)]
     pub phys_iface: Option<String>,
 }
@@ -104,7 +91,6 @@ impl Config {
             serde_yaml::from_str(&text)
                 .with_context(|| format!("parse config: {}", path.display()))?
         } else {
-            // Build from CLI flags; client and tun2socks are required without a config file
             Config {
                 client: cli
                     .client
@@ -128,7 +114,6 @@ impl Config {
             }
         };
 
-        // CLI overrides always win
         if let Some(ref v) = cli.client {
             cfg.client = v.clone();
         }
@@ -165,15 +150,6 @@ impl Config {
 }
 
 // ── Stack ─────────────────────────────────────────────────────────────────────
-//
-// One "stack" = one complete run of:
-//   1. detect physical route
-//   2. bring up TUN + configure routes
-//   3. launch tun2socks
-//   4. launch client  (with --outbound-ip <phys_ip>)
-//
-// When any child dies OR the network-change watcher fires, the entire stack is
-// torn down and rebuilt.
 
 async fn run_stack(cfg: Arc<Config>, phys: PhysicalRoute) -> Result<()> {
     info!(
@@ -181,11 +157,8 @@ async fn run_stack(cfg: Arc<Config>, phys: PhysicalRoute) -> Result<()> {
         phys.iface, phys.ip, phys.gateway
     );
 
-    // ── 1. Bring up TUN ───────────────────────────────────────────────────────
-    route::tun_up(&cfg, &phys).await?;
-    info!("[stack] TUN {} is up, routes configured", cfg.tun_name);
-
-    // ── 2. Start tun2socks ────────────────────────────────────────────────────
+    // ── 1. Start tun2socks FIRST ─────────────────────────────────────────────
+    // 先让 tun2socks 启动，以便在系统层初始化并创建 TUN 虚体网卡。
     let socks_addr = format!("127.0.0.1:{}", cfg.socks_port);
     let t2s_args = vec![
         "-device".to_string(),
@@ -198,8 +171,10 @@ async fn run_stack(cfg: Arc<Config>, phys: PhysicalRoute) -> Result<()> {
     let mut t2s = process::spawn(&cfg.tun2socks, &t2s_args, "tun2socks")?;
     info!("[stack] tun2socks started (pid {})", t2s.id().unwrap_or(0));
 
-    // Brief delay so tun2socks has time to open the TUN fd before client connects
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    // ── 2. Bring up TUN + Configure Routes ────────────────────────────────────
+    // 已经移除了之前的 500ms 盲等。tun_up 内部会在 Windows 环境下优雅地轮询等待网卡就绪。
+    route::tun_up(&cfg, &phys).await?;
+    info!("[stack] TUN {} is up, routes configured", cfg.tun_name);
 
     // ── 3. Start client ───────────────────────────────────────────────────────
     let mut client_args = vec![
@@ -247,14 +222,13 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     let cfg = Arc::new(Config::load(&cli)?);
 
-    // Ctrl-C / SIGTERM → clean shutdown
     let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
     {
         let tx = shutdown_tx.clone();
         tokio::spawn(async move {
             #[cfg(unix)]
             {
-                use tokio::signal::unix::{SignalKind, signal};
+                use tokio::signal::unix::{signal, SignalKind};
                 let mut sigterm = signal(SignalKind::terminate()).expect("sigterm");
                 tokio::select! {
                     _ = tokio::signal::ctrl_c() => {}
@@ -270,7 +244,6 @@ async fn main() -> Result<()> {
         });
     }
 
-    // Network-change watcher fires whenever the physical route changes
     let (net_tx, mut net_rx) = watch::channel(());
     {
         let cfg2 = cfg.clone();
@@ -285,7 +258,6 @@ async fn main() -> Result<()> {
             break;
         }
 
-        // Detect physical route (excludes TUN interface)
         let phys = match network::detect_physical_route(&cfg) {
             Ok(p) => p,
             Err(e) => {
@@ -300,7 +272,6 @@ async fn main() -> Result<()> {
 
         info!("[proxy] starting stack (phys ip={})...", phys.ip);
 
-        // Spawn stack as an abortable task so network-change can cancel it immediately
         let stack_task = {
             let cfg = cfg.clone();
             let phys = phys.clone();
@@ -308,7 +279,6 @@ async fn main() -> Result<()> {
         };
 
         tokio::select! {
-            // Stack exited on its own (child died or error)
             r = stack_task => {
                 match r {
                     Ok(Ok(())) => {}
@@ -322,11 +292,9 @@ async fn main() -> Result<()> {
                     _ = shutdown_rx.changed() => { break; }
                 }
             }
-            // Network changed — abort current stack and rebuild immediately
             _ = net_rx.changed() => {
                 if *shutdown_rx.borrow() { break; }
                 info!("[proxy] network changed, tearing down and rebuilding...");
-                // Children are kill_on_drop; also run explicit tun_down as safety net
                 route::tun_down(&cfg).await;
                 tokio::time::sleep(Duration::from_millis(500)).await;
             }

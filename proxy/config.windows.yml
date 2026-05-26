@@ -1,0 +1,34 @@
+# ── Core Executable Paths ─────────────────────────────────────────────────────
+# Relative paths targeting Windows executables.
+# Assumes these binaries reside in the same folder as the proxy manager.
+client: "./client.exe"
+tun2socks: "./tun2socks.exe"
+
+# ── Remote Server Configuration ───────────────────────────────────────────────
+# The address of your remote outbound proxy server.
+# The internal routing logic will automatically resolve this domain/IP
+# and add a bypass host route so proxy traffic doesn't loop back into the TUN.
+server: "https://your-server-domain.com"
+
+# Authentication token required by your remote server (Leave as "" if none).
+token: "my_secure_super_secret_token_123"
+
+# ── Local Network & TUN Interface Settings ────────────────────────────────────
+# Local SOCKS5 port that the client listens on and tun2socks forwards traffic to.
+socks_port: 1080
+
+# The designated name of the TUN interface.
+# On Windows, our polling logic will automatically match the Wintun adapter
+# created by tun2socks even if the system names it differently, so keep this default.
+tun_name: "tun0"
+
+# Virtual IP, CIDR prefix, and gateway for the TUN interface ecosystem.
+tun_ip: "198.18.0.1"
+tun_prefix: 16
+tun_gw: "198.18.0.2"
+
+# ── Physical Interface Auto-Detection ─────────────────────────────────────────
+# Kept commented out to trigger the automatic detection logic.
+# The manager will automatically query the active Windows network adapters
+# to find your primary physical internet gateway (e.g., Wi-Fi or Ethernet).
+# phys_iface: ""
