@@ -76,21 +76,31 @@ token: "your-secret-token"  # clients must send this token
 For TUN transparent proxy mode:
 
 ```yaml
-# TUN interface settings
-tun:
-  name: tun0
-  addr: 198.18.0.1      # fake-IP gateway
-  routes:
-    - 198.18.0.0/15      # fake-IP range (DO NOT change)
+# Core executables (relative to proxy binary location)
+client: "./client"
+tun2socks: "./tun2socks"
 
 # Server connection
 server: "your-worker.your-subdomain.workers.dev"
 token: "your-secret-token"
 
-# tun2socks settings
-tun2socks:
-  binary: ./tun2socks
-  gateway: 198.18.0.2   # must match tun2socks fake-IP
+# Local SOCKS5 port (client listens, tun2socks forwards to)
+socks_port: 1080
+
+# TUN interface settings
+tun_name: "tun0"
+tun_ip: "198.18.0.1"       # TUN virtual IP
+tun_prefix: 16              # CIDR prefix (198.18.0.0/16)
+tun_gw: "198.18.0.2"        # TUN gateway (fake-IP gateway)
+
+# IPv6 TUN settings
+tun_ip6: "fd00::1"
+tun_prefix6: 64
+tun_gw6: "fd00::2"
+
+# Physical interface (optional — leave empty for auto-detect)
+# On Linux: parses /proc/net/route; on macOS: netstat; on Windows: PowerShell
+phys_iface: ""
 ```
 
 ## Architecture
@@ -141,12 +151,12 @@ Run with administrator privileges:
 
 ### How it works
 
-1. Proxy creates a TUN interface with fake-IP ranges `198.18.0.0/15` (IPv4) and `fd00::/64` (IPv6)
+1. Proxy creates a TUN interface with fake-IP ranges `198.18.0.0/16` (IPv4) and `fd00::/64` (IPv6)
 2. Routes traffic destined to fake-IPs through the TUN interface
 3. tun2socks reads from TUN and sends to the local SOCKS5 client
 4. Client multiplexes traffic over WebSocket to the server
 
-**Important:** The fake-IP ranges `198.18.0.0/15` and `fd00::/64` must not overlap with your real network.
+**Important:** The fake-IP ranges `198.18.0.0/16` and `fd00::/64` must not overlap with your real network.
 
 ## Requirements
 

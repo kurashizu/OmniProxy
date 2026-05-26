@@ -404,10 +404,9 @@ mod imp {
 use imp::{detect_auto, detect_for_iface, watch_route_changes};
 
 pub fn detect_physical_route(cfg: &Config) -> Result<PhysicalRoute> {
-    if let Some(ref iface) = cfg.phys_iface {
-        detect_for_iface(iface)
-    } else {
-        detect_auto(&cfg.tun_name)
+    match cfg.phys_iface.as_deref() {
+        Some(iface) if !iface.is_empty() => detect_for_iface(iface),
+        _ => detect_auto(&cfg.tun_name),
     }
 }
 
