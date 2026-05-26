@@ -4,7 +4,7 @@ use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::watch;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 // ── Physical route info ───────────────────────────────────────────────────────
 
@@ -21,6 +21,7 @@ pub struct PhysicalRoute {
 mod imp {
     use super::*;
     use std::fs;
+    use tracing::warn;
 
     /// Parse /proc/net/route to find default routes, skip `tun_name`.
     pub fn detect_auto(tun_name: &str) -> Result<PhysicalRoute> {
@@ -115,7 +116,7 @@ mod imp {
                 ifr.ifr_name.as_mut_ptr(),
                 copy_len,
             );
-            let ret = libc::ioctl(sock, libc::SIOCGIFADDR, &mut ifr as *mut _);
+            let ret = libc::ioctl(sock, libc::SIOCGIFADDR as libc::Ioctl, &mut ifr as *mut _);
             libc::close(sock);
             if ret < 0 {
                 anyhow::bail!(
