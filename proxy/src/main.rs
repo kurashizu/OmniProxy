@@ -37,9 +37,15 @@ struct Cli {
     #[arg(long)]
     tun_ip: Option<String>,
     #[arg(long)]
+    tun_ip6: Option<String>,
+    #[arg(long)]
     tun_prefix: Option<u8>,
     #[arg(long)]
+    tun_prefix6: Option<u8>,
+    #[arg(long)]
     tun_gw: Option<String>,
+    #[arg(long)]
+    tun_gw6: Option<String>,
     #[arg(long)]
     phys_iface: Option<String>,
 }
@@ -61,10 +67,16 @@ pub struct Config {
     pub tun_name: String,
     #[serde(default = "default_tun_ip")]
     pub tun_ip: String,
+    #[serde(default = "default_tun_ip6")]
+    pub tun_ip6: String,
     #[serde(default = "default_tun_prefix")]
     pub tun_prefix: u8,
+    #[serde(default = "default_tun_prefix6")]
+    pub tun_prefix6: u8,
     #[serde(default = "default_tun_gw")]
     pub tun_gw: String,
+    #[serde(default = "default_tun_gw6")]
+    pub tun_gw6: String,
     #[serde(default)]
     pub phys_iface: Option<String>,
 }
@@ -78,11 +90,20 @@ fn default_tun_name() -> String {
 fn default_tun_ip() -> String {
     "198.18.0.1".into()
 }
+fn default_tun_ip6() -> String {
+    "fd00::1".into()
+}
 fn default_tun_prefix() -> u8 {
     16
 }
+fn default_tun_prefix6() -> u8 {
+    64
+}
 fn default_tun_gw() -> String {
     "198.18.0.2".into()
+}
+fn default_tun_gw6() -> String {
+    "fd00::2".into()
 }
 
 impl Config {
@@ -104,8 +125,11 @@ impl Config {
                 socks_port: cli.socks_port.unwrap_or_else(default_socks_port),
                 tun_name: cli.tun_name.clone().unwrap_or_else(default_tun_name),
                 tun_ip: cli.tun_ip.clone().unwrap_or_else(default_tun_ip),
+                tun_ip6: cli.tun_ip6.clone().unwrap_or_else(default_tun_ip6),
                 tun_prefix: cli.tun_prefix.unwrap_or_else(default_tun_prefix),
+                tun_prefix6: cli.tun_prefix6.unwrap_or_else(default_tun_prefix6),
                 tun_gw: cli.tun_gw.clone().unwrap_or_else(default_tun_gw),
+                tun_gw6: cli.tun_gw6.clone().unwrap_or_else(default_tun_gw6),
                 phys_iface: cli.phys_iface.clone(),
             }
         };
@@ -131,11 +155,20 @@ impl Config {
         if let Some(ref v) = cli.tun_ip {
             cfg.tun_ip = v.clone();
         }
+        if let Some(ref v) = cli.tun_ip6 {
+            cfg.tun_ip6 = v.clone();
+        }
         if let Some(v) = cli.tun_prefix {
             cfg.tun_prefix = v;
         }
+        if let Some(v) = cli.tun_prefix6 {
+            cfg.tun_prefix6 = v;
+        }
         if let Some(ref v) = cli.tun_gw {
             cfg.tun_gw = v.clone();
+        }
+        if let Some(ref v) = cli.tun_gw6 {
+            cfg.tun_gw6 = v.clone();
         }
         if let Some(ref v) = cli.phys_iface {
             cfg.phys_iface = Some(v.clone());

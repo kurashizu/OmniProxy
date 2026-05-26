@@ -141,12 +141,12 @@ Run with administrator privileges:
 
 ### How it works
 
-1. Proxy creates a TUN interface with fake-IP range `198.18.0.0/15`
+1. Proxy creates a TUN interface with fake-IP ranges `198.18.0.0/15` (IPv4) and `fd00::/64` (IPv6)
 2. Routes traffic destined to fake-IPs through the TUN interface
 3. tun2socks reads from TUN and sends to the local SOCKS5 client
 4. Client multiplexes traffic over WebSocket to the server
 
-**Important:** The fake-IP range `198.18.0.0/15` must not overlap with your real network.
+**Important:** The fake-IP ranges `198.18.0.0/15` and `fd00::/64` must not overlap with your real network.
 
 ## Requirements
 
