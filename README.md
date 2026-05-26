@@ -50,7 +50,9 @@ Download the latest release from GitHub:
 - **Windows**: `socks5-proxy-windows-x86_64-msvc.zip`
 - **macOS**: `socks5-proxy-macos-x86_64.zip` or `socks5-proxy-macos-aarch64.zip`
 
-Each zip contains: client, server, proxy, tun2socks, config.yml, and README.md.
+Each zip contains: `client`, `server`, `proxy`, `tun2socks`, `config.yml`, and `README.md`.
+
+**One-time setup:** Extract the zip to any directory. Edit `config.yml` once — all binaries (`client`, `tun2socks`) are resolved relative to the `proxy` binary location, so no path changes needed.
 
 ## Configuration
 
@@ -71,9 +73,9 @@ port: 9880
 token: "your-secret-token"  # clients must send this token
 ```
 
-### Proxy (`proxy/config.yml`)
+### Proxy (`config.yml`)
 
-For TUN transparent proxy mode:
+For TUN transparent proxy mode. Place `config.yml` in the same directory as the `proxy` binary — paths are resolved relative to the binary location, so `./client` and `./tun2socks` work out of the box.
 
 ```yaml
 # Core executables (relative to proxy binary location)
