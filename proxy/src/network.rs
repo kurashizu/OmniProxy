@@ -4,7 +4,7 @@ use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::watch;
-use tracing::{debug, info};
+use tracing::info;
 
 // ── Physical route info ───────────────────────────────────────────────────────
 
@@ -21,7 +21,7 @@ pub struct PhysicalRoute {
 mod imp {
     use super::*;
     use std::fs;
-    use tracing::warn;
+    use tracing::{debug, warn};
 
     /// Parse /proc/net/route to find default routes, skip `tun_name`.
     pub fn detect_auto(tun_name: &str) -> Result<PhysicalRoute> {
@@ -321,6 +321,7 @@ mod imp {
 #[cfg(windows)]
 mod imp {
     use super::*;
+    use tracing::debug;
 
     pub fn detect_auto(tun_name: &str) -> Result<PhysicalRoute> {
         detect_via_powershell(Some(tun_name))

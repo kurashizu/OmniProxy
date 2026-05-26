@@ -1,155 +1,195 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - 'v*'
+    push:
+        tags:
+            - "v*"
 
 jobs:
-  build:
-    strategy:
-      matrix:
-        include:
-          - target: x86_64-pc-windows-msvc
-            os: windows-latest
-            ext: .exe
-            zip: socks5-proxy-windows-x86_64-msvc.zip
-          - target: x86_64-unknown-linux-musl
-            os: ubuntu-latest
-            ext: ""
-            zip: socks5-proxy-linux-x86_64-musl.zip
+    build:
+        strategy:
+            matrix:
+                include:
+                    - target: x86_64-pc-windows-msvc
+                      os: windows-latest
+                      ext: .exe
+                      zip: socks5-proxy-windows-x86_64-msvc.zip
 
-    runs-on: ${{ matrix.os }}
+                    - target: x86_64-unknown-linux-musl
+                      os: ubuntu-latest
+                      ext: ""
+                      zip: socks5-proxy-linux-x86_64-musl.zip
 
-    steps:
-      # ── Setup ────────────────────────────────────────────────────────────────
-      - uses: actions/checkout@v5
+                    - target: x86_64-apple-darwin
+                      os: macos-latest
+                      ext: ""
+                      zip: socks5-proxy-macos-x86_64.zip
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
+                    - target: aarch64-apple-darwin
+                      os: macos-latest
+                      ext: ""
+                      zip: socks5-proxy-macos-aarch64.zip
 
-      - name: Install musl tools
-        if: matrix.os == 'ubuntu-latest'
-        run: sudo apt-get update && sudo apt-get install -y musl-tools
+        runs-on: ${{ matrix.os }}
 
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: |
-            client
-            server
-            proxy
+        steps:
+            # ── Setup ────────────────────────────────────────────────────────────────
+            - uses: actions/checkout@v5
 
-      # ── Build ───────────────────────────────────────────────────────────────
-      - name: Build client
-        env:
-          RUSTFLAGS: ${{ matrix.os == 'windows-latest' && '-Ctarget-feature=+crt-static' || '' }}
-        run: |
-          cargo build --release --manifest-path client/Cargo.toml --target ${{ matrix.target }}
-          mkdir -p dist
-          cp client/target/${{ matrix.target }}/release/client${{ matrix.ext }} dist/
-        shell: bash
+            - name: Install Rust
+              uses: dtolnay/rust-toolchain@stable
+              with:
+                  targets: ${{ matrix.target }}
 
-      - name: Build server
-        env:
-          RUSTFLAGS: ${{ matrix.os == 'windows-latest' && '-Ctarget-feature=+crt-static' || '' }}
-        run: |
-          cargo build --release --manifest-path server/Cargo.toml --target ${{ matrix.target }}
-          mkdir -p dist
-          cp server/target/${{ matrix.target }}/release/server${{ matrix.ext }} dist/
-        shell: bash
+            - name: Install musl tools
+              if: matrix.os == 'ubuntu-latest'
+              run: sudo apt-get update && sudo apt-get install -y musl-tools
 
-      - name: Build proxy
-        env:
-          RUSTFLAGS: ${{ matrix.os == 'windows-latest' && '-Ctarget-feature=+crt-static' || '' }}
-        run: |
-          cargo build --release --manifest-path proxy/Cargo.toml --target ${{ matrix.target }}
-          mkdir -p dist
-          cp proxy/target/${{ matrix.target }}/release/proxy${{ matrix.ext }} dist/
-        shell: bash
+            - name: Cache cargo
+              uses: Swatinem/rust-cache@v2
+              with:
+                  workspaces: |
+                      client
+                      server
+                      proxy
 
-      # ── Download tun2socks ──────────────────────────────────────────────────
-      - name: Download tun2socks (Linux)
-        if: matrix.os == 'ubuntu-latest'
-        continue-on-error: true
-        run: |
-          curl -sL https://github.com/xjasonlyu/tun2socks/releases/download/v2.6.0/tun2socks-linux-amd64.zip -o tun2socks.zip
-          unzip -o tun2socks.zip
-          mv tun2socks-linux-amd64 tun2socks
-          chmod +x tun2socks
-        shell: bash
+            # ── Build ───────────────────────────────────────────────────────────────
+            - name: Build client
+              env:
+                  RUSTFLAGS: ${{ matrix.os == 'windows-latest' && '-Ctarget-feature=+crt-static' || '' }}
+              run: |
+                  cargo build --release --manifest-path client/Cargo.toml --target ${{ matrix.target }}
+                  mkdir -p dist
+                  cp client/target/${{ matrix.target }}/release/client${{ matrix.ext }} dist/
+              shell: bash
 
-      - name: Download tun2socks (Windows)
-        if: matrix.os == 'windows-latest'
-        continue-on-error: true
-        run: |
-          curl.exe -sL https://github.com/xjasonlyu/tun2socks/releases/download/v2.6.0/tun2socks-windows-amd64-v3.zip -o tun2socks.zip
-          Expand-Archive -Force tun2socks.zip -DestinationPath .
-          mv tun2socks-windows-amd64-v3.exe tun2socks.exe
-        shell: powershell
+            - name: Build server
+              env:
+                  RUSTFLAGS: ${{ matrix.os == 'windows-latest' && '-Ctarget-feature=+crt-static' || '' }}
+              run: |
+                  cargo build --release --manifest-path server/Cargo.toml --target ${{ matrix.target }}
+                  mkdir -p dist
+                  cp server/target/${{ matrix.target }}/release/server${{ matrix.ext }} dist/
+              shell: bash
 
-      - name: Download wintun (Windows)
-        if: matrix.os == 'windows-latest'
-        continue-on-error: true
-        run: |
-          curl.exe -sL https://www.wintun.net/builds/wintun-0.14.1.zip -o wintun.zip
-          Expand-Archive -Force wintun.zip -DestinationPath .
-          $dll = Get-ChildItem -Recurse -Filter wintun.dll | Select-Object -First 1 -ExpandProperty FullName
-          cp $dll dist/
-        shell: powershell
+            - name: Build proxy
+              env:
+                  RUSTFLAGS: ${{ matrix.os == 'windows-latest' && '-Ctarget-feature=+crt-static' || '' }}
+              run: |
+                  cargo build --release --manifest-path proxy/Cargo.toml --target ${{ matrix.target }}
+                  mkdir -p dist
+                  cp proxy/target/${{ matrix.target }}/release/proxy${{ matrix.ext }} dist/
+              shell: bash
 
-      # ── Package ──────────────────────────────────────────────────────────────
-      - name: Package Linux
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          cp README.md dist/
-          cp tun2socks dist/ || true
-          zip -r ${{ matrix.zip }} dist/
-        shell: bash
+            # Ad-hoc sign macOS binaries so Gatekeeper doesn't block them on first run
+            - name: Ad-hoc sign (macOS)
+              if: matrix.os == 'macos-latest'
+              run: |
+                  codesign --force --sign - dist/client
+                  codesign --force --sign - dist/server
+                  codesign --force --sign - dist/proxy
+              shell: bash
 
-      - name: Package Windows
-        if: matrix.os == 'windows-latest'
-        run: |
-          cp README.md dist/
-          if (Test-Path tun2socks.exe) { cp tun2socks.exe dist/ }
-          Compress-Archive -Path dist -DestinationPath ${{ matrix.zip }}
-        shell: powershell
+            # ── Download tun2socks ──────────────────────────────────────────────────
+            - name: Download tun2socks (Linux)
+              if: matrix.os == 'ubuntu-latest'
+              continue-on-error: true
+              run: |
+                  curl -sL https://github.com/xjasonlyu/tun2socks/releases/download/v2.6.0/tun2socks-linux-amd64.zip -o tun2socks.zip
+                  unzip -o tun2socks.zip
+                  mv tun2socks-linux-amd64 tun2socks
+                  chmod +x tun2socks
+              shell: bash
 
-      # ── Upload ──────────────────────────────────────────────────────────────
-      - name: Upload assets
-        uses: actions/upload-artifact@v5
-        with:
-          name: ${{ matrix.zip }}
-          path: ${{ matrix.zip }}
+            - name: Download tun2socks (macOS x86_64)
+              if: matrix.target == 'x86_64-apple-darwin'
+              continue-on-error: true
+              run: |
+                  curl -sL https://github.com/xjasonlyu/tun2socks/releases/download/v2.6.0/tun2socks-darwin-amd64.zip -o tun2socks.zip
+                  unzip -o tun2socks.zip
+                  mv tun2socks-darwin-amd64 tun2socks
+                  chmod +x tun2socks
+              shell: bash
 
-  # ── Release ────────────────────────────────────────────────────────────────
-  release:
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
+            - name: Download tun2socks (macOS aarch64)
+              if: matrix.target == 'aarch64-apple-darwin'
+              continue-on-error: true
+              run: |
+                  curl -sL https://github.com/xjasonlyu/tun2socks/releases/download/v2.6.0/tun2socks-darwin-arm64.zip -o tun2socks.zip
+                  unzip -o tun2socks.zip
+                  mv tun2socks-darwin-arm64 tun2socks
+                  chmod +x tun2socks
+              shell: bash
 
-    steps:
-      - name: Download Linux
-        uses: actions/download-artifact@v5
-        with:
-          name: socks5-proxy-linux-x86_64-musl.zip
-          path: .
+            - name: Download tun2socks (Windows)
+              if: matrix.os == 'windows-latest'
+              continue-on-error: true
+              run: |
+                  curl.exe -sL https://github.com/xjasonlyu/tun2socks/releases/download/v2.6.0/tun2socks-windows-amd64-v3.zip -o tun2socks.zip
+                  Expand-Archive -Force tun2socks.zip -DestinationPath .
+                  mv tun2socks-windows-amd64-v3.exe tun2socks.exe
+              shell: powershell
 
-      - name: Download Windows
-        uses: actions/download-artifact@v5
-        with:
-          name: socks5-proxy-windows-x86_64-msvc.zip
-          path: .
+            - name: Download wintun (Windows)
+              if: matrix.os == 'windows-latest'
+              continue-on-error: true
+              run: |
+                  curl.exe -sL https://www.wintun.net/builds/wintun-0.14.1.zip -o wintun.zip
+                  Expand-Archive -Force wintun.zip -DestinationPath .
+                  $dll = Get-ChildItem -Recurse -Filter wintun.dll | Select-Object -First 1 -ExpandProperty FullName
+                  cp $dll dist/
+              shell: powershell
 
-      - name: Upload to release
-        uses: softprops/action-gh-release@v3
-        with:
-          files: |
-            socks5-proxy-linux-x86_64-musl.zip
-            socks5-proxy-windows-x86_64-msvc.zip
-          generate_release_notes: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            # ── Package ──────────────────────────────────────────────────────────────
+            - name: Package Linux
+              if: matrix.os == 'ubuntu-latest'
+              run: |
+                  cp README.md dist/ || true
+                  cp tun2socks dist/ || true
+                  zip -r ${{ matrix.zip }} dist/
+              shell: bash
+
+            - name: Package macOS
+              if: matrix.os == 'macos-latest'
+              run: |
+                  cp README.md dist/ || true
+                  cp tun2socks dist/ || true
+                  zip -r ${{ matrix.zip }} dist/
+              shell: bash
+
+            - name: Package Windows
+              if: matrix.os == 'windows-latest'
+              run: |
+                  if (Test-Path README.md) { cp README.md dist/ }
+                  if (Test-Path tun2socks.exe) { cp tun2socks.exe dist/ }
+                  Compress-Archive -Path dist -DestinationPath ${{ matrix.zip }}
+              shell: powershell
+
+            # ── Upload ──────────────────────────────────────────────────────────────
+            - name: Upload assets
+              uses: actions/upload-artifact@v6
+              with:
+                  name: ${{ matrix.zip }}
+                  path: ${{ matrix.zip }}
+
+    # ── Release ────────────────────────────────────────────────────────────────
+    release:
+        needs: build
+        runs-on: ubuntu-latest
+        permissions:
+            contents: write
+
+        steps:
+            - name: Download all artifacts
+              uses: actions/download-artifact@v6
+              with:
+                  path: artifacts
+                  merge-multiple: true
+
+            - name: Upload to release
+              uses: softprops/action-gh-release@v3
+              with:
+                  files: artifacts/*.zip
+                  generate_release_notes: true
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
