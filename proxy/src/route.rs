@@ -51,20 +51,19 @@ mod imp {
         let tun = &cfg.tun_name;
         let tun_ip = &cfg.tun_ip;
         let tun_ip6 = &cfg.tun_ip6;
-        let tun_gw = &cfg.tun_gw;
-        let tun_gw6 = &cfg.tun_gw6;
         let prefix = cfg.tun_prefix;
         let prefix6 = cfg.tun_prefix6;
 
         ip_strict(&["link", "set", "dev", tun, "mtu", "1500", "up"]).await?;
         ip(&["addr", "add", &format!("{tun_ip}/{prefix}"), "dev", tun]).await?;
 
+        // Bypass route for server
         if let Some(ref sip) = cfg.server_ip_hint_v4().await {
             let gw = phys.gateway.to_string();
             ip(&["route", "add", sip, "via", &gw, "dev", &phys.iface]).await?;
         }
 
-        // IPv6 TUN addr + default route (best-effort)
+        // IPv6 TUN addr
         ip(&[
             "-6",
             "addr",
@@ -75,17 +74,11 @@ mod imp {
         ])
         .await?;
 
-        ip(&[
-            "route", "add", "default", "via", tun_gw, "dev", tun, "metric", "1",
-        ])
-        .await?;
+        // Default routes via TUN device (no gateway needed)
         ip(&["route", "add", "default", "dev", tun, "metric", "1"]).await?;
+        ip(&["-6", "route", "add", "default", "dev", tun, "metric", "1"]).await?;
 
-        ip(&[
-            "-6", "route", "add", "::/0", "via", tun_gw6, "dev", tun, "metric", "1",
-        ])
-        .await?;
-
+        // Bypass route for server IPv6
         if let Some((gw6, iface6)) = ipv6_default_gateway().await {
             if let Some(server_ip6) = cfg.server_ip_hint_v6().await {
                 ip(&[
@@ -174,8 +167,6 @@ mod imp {
         let tun = &cfg.tun_name;
         let tun_ip = &cfg.tun_ip;
         let tun_ip6 = &cfg.tun_ip6;
-        let tun_gw = &cfg.tun_gw;
-        let tun_gw6 = &cfg.tun_gw6;
         let prefix6 = cfg.tun_prefix6;
 
         info!("[route] Configuring TUN routes (macOS)...");
@@ -210,18 +201,18 @@ mod imp {
 
         // Split tunneling default routes (IPv4)
         // Using /1 routes instead of default to avoid conflicts with physical default gateway
-        route(&["-n", "add", "-net", "0.0.0.0/1", tun_gw]).await;
-        route(&["-n", "add", "-net", "128.0.0.0/1", tun_gw]).await;
+        route(&["-n", "add", "-net", "0.0.0.0/1", tun_ip]).await;
+        route(&["-n", "add", "-net", "128.0.0.0/1", tun_ip]).await;
 
         // Split tunneling default routes (IPv6)
-        route(&["-n", "add", "-inet6", "-net", "::/1", tun_gw6]).await;
-        route(&["-n", "add", "-inet6", "-net", "8000::/1", tun_gw6]).await;
+        route(&["-n", "add", "-inet6", "-net", "::/1", tun_ip6]).await;
+        route(&["-n", "add", "-inet6", "-net", "8000::/1", tun_ip6]).await;
 
         info!("[route] TUN routes configured (macOS)");
         Ok(())
     }
 
-    pub async fn tun_down(_cfg: &Config) {
+    pub async fn tun_down(cfg: &Config) {
         // Clean up split tunneling routes
         route(&["-n", "delete", "-net", "0.0.0.0/1"]).await;
         route(&["-n", "delete", "-net", "128.0.0.0/1"]).await;
