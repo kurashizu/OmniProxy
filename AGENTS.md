@@ -18,7 +18,8 @@ cargo build --release --manifest-path proxy/Cargo.toml
 
 cargo run --manifest-path client/Cargo.toml -- --config client/config.yml
 cargo run --manifest-path server/Cargo.toml -- --config server/config.yml
-cargo run --manifest-path proxy/Cargo.toml -- --config proxy/config.unix.yml
+cargo run --manifest-path proxy/Cargo.toml -- --config proxy/config.linux.yml
+cargo run --manifest-path proxy/Cargo.toml -- --config proxy/config.macos.yml
 ```
 
 ## Release Workflow

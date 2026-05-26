@@ -1,5 +1,5 @@
 # ── Core Executable Paths ─────────────────────────────────────────────────────
-# Relative paths targeting Unix binaries (no extension).
+# Relative paths targeting macOS binaries (no extension).
 # Assumes these binaries reside in the same folder as the proxy manager.
 client: "./client"
 tun2socks: "./tun2socks"
@@ -17,8 +17,9 @@ token: "my_secure_super_secret_token_123"
 # Local SOCKS5 port that the client listens on and tun2socks forwards traffic to.
 socks_port: 1080
 
-# The designated name of the TUN interface (standard for Linux/macOS).
-tun_name: "tun0"
+# The designated name of the TUN interface.
+# macOS requires "utun" prefix. We use utun100 to avoid conflicts with system utun interfaces (0-9).
+tun_name: "utun100"
 
 # Virtual IP, CIDR prefix, and gateway for the TUN interface ecosystem.
 tun_ip: "198.18.0.1"
@@ -32,6 +33,6 @@ tun_gw6: "fd00::2"
 
 # ── Physical Interface Auto-Detection ─────────────────────────────────────────
 # Kept commented out to trigger the automatic detection logic.
-# On Linux, it parses /proc/net/route; on macOS, it parses netstat.
-# It automatically targets your primary outbound interface (e.g., eth0, wlan0, en0).
+# On macOS, it parses netstat.
+# It automatically targets your primary outbound interface (e.g., en0, en1).
 phys_iface: ""

@@ -1,0 +1,37 @@
+# ── Core Executable Paths ─────────────────────────────────────────────────────
+# Relative paths targeting Linux binaries (no extension).
+# Assumes these binaries reside in the same folder as the proxy manager.
+client: "./client"
+tun2socks: "./tun2socks"
+
+# ── Remote Server Configuration ───────────────────────────────────────────────
+# The address of your remote outbound proxy server.
+# The internal routing logic will automatically resolve this domain/IP
+# and add a bypass host route so proxy traffic doesn't loop back into the TUN.
+server: "your-server-domain.com"
+
+# Authentication token required by your remote server (Leave as "" if none).
+token: "my_secure_super_secret_token_123"
+
+# ── Local Network & TUN Interface Settings ────────────────────────────────────
+# Local SOCKS5 port that the client listens on and tun2socks forwards traffic to.
+socks_port: 1080
+
+# The designated name of the TUN interface (standard for Linux).
+tun_name: "tun0"
+
+# Virtual IP, CIDR prefix, and gateway for the TUN interface ecosystem.
+tun_ip: "198.18.0.1"
+tun_prefix: 16
+tun_gw: "198.18.0.2"
+
+# IPv6 TUN defaults (fd00::/64 is a ULA range).
+tun_ip6: "fd00::1"
+tun_prefix6: 64
+tun_gw6: "fd00::2"
+
+# ── Physical Interface Auto-Detection ─────────────────────────────────────────
+# Kept commented out to trigger the automatic detection logic.
+# On Linux, it parses /proc/net/route.
+# It automatically targets your primary outbound interface (e.g., eth0, wlan0).
+phys_iface: ""
