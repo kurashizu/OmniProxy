@@ -55,18 +55,11 @@ $ErrorActionPreference = 'Stop'
 
 # ── Console colors ────────────────────────────────────────────────────────────
 $Host.UI.RawUI.WindowTitle = 'Windows Transparent Proxy Launcher'
-$Color = @{
-    Red    = 'Red'
-    Green  = 'Green'
-    Yellow = 'Yellow'
-    Cyan   = 'Cyan'
-    White  = 'White'
-}
 
-function Write-Log  { param([string]$Message) Write-Host "[proxy] $Message" -ForegroundColor $Color.Cyan }
-function Write-Ok   { param([string]$Message) Write-Host "[proxy] $Message" -ForegroundColor $Color.Green }
-function Write-Warn { param([string]$Message) Write-Host "[proxy] $Message" -ForegroundColor $Color.Yellow }
-function Write-Err  { param([string]$Message) Write-Host "[proxy] ERROR: $Message" -ForegroundColor $Color.Red }
+function Write-Log  { param([string]$Message) Write-Host "[proxy] $Message" -ForegroundColor Cyan }
+function Write-Ok   { param([string]$Message) Write-Host "[proxy] $Message" -ForegroundColor Green }
+function Write-Warn { param([string]$Message) Write-Host "[proxy] $Message" -ForegroundColor Yellow }
+function Write-Err  { param([string]$Message) Write-Host "[proxy] ERROR: $Message" -ForegroundColor Red }
 
 function Fail {
     param([string]$Message)
@@ -85,17 +78,19 @@ if (-not (Test-Administrator)) {
 }
 
 # ── Runtime state ─────────────────────────────────────────────────────────────
-$script:ClientProcess = $null
+$script:ClientProcess    = $null
 $script:Tun2SocksProcess = $null
-$script:PhysicalIfIndex = $null
+$script:PhysicalIfIndex  = $null
 $script:PhysicalGateway4 = $null
-$script:PhysicalIfAlias = $null
+$script:PhysicalIfAlias  = $null
 $script:PhysicalGateway6 = $null
 $script:PhysicalIfIndex6 = $null
-$script:BypassIPv4 = @()`n$script:BypassIPv6 = @()
-$script:TunConfigured = $false
+# FIX 1: 原文把两个赋值写在同一行用了字面 \n，分成两行
+$script:BypassIPv4       = @()
+$script:BypassIPv6       = @()
+$script:TunConfigured    = $false
 $script:RoutesConfigured = $false
-$script:TunnelIfIndex = $null
+$script:TunnelIfIndex    = $null
 
 function Get-DefaultRoutes {
     param(
@@ -122,9 +117,7 @@ function Get-PhysicalGatewayInfo {
     )
 
     $routes = Get-DefaultRoutes -AddressFamily $AddressFamily
-    if (-not $routes) {
-        return $null
-    }
+    if (-not $routes) { return $null }
 
     foreach ($route in $routes) {
         $adapter = Get-NetAdapter -InterfaceIndex $route.ifIndex -ErrorAction SilentlyContinue
@@ -136,33 +129,24 @@ function Get-PhysicalGatewayInfo {
 
         if ($AddressFamily -eq 'IPv4' -and $route.NextHop -and $route.NextHop -ne '0.0.0.0') {
             return [pscustomobject]@{
-                IfIndex  = $route.ifIndex
-                Gateway  = $route.NextHop
-                Alias    = $adapter.Name
-                Family   = 'IPv4'
+                IfIndex = $route.ifIndex
+                Gateway = $route.NextHop
+                Alias   = $adapter.Name
+                Family  = 'IPv4'
             }
         }
 
         if ($AddressFamily -eq 'IPv6' -and $route.NextHop -and $route.NextHop -ne '::') {
             return [pscustomobject]@{
-                IfIndex  = $route.ifIndex
-                Gateway  = $route.NextHop
-                Alias    = $adapter.Name
-                Family   = 'IPv6'
+                IfIndex = $route.ifIndex
+                Gateway = $route.NextHop
+                Alias   = $adapter.Name
+                Family  = 'IPv6'
             }
         }
     }
 
     return $null
-}
-
-function Get-IpPrefixes {
-    param([string[]]$IPs)
-
-    foreach ($ip in $IPs) {
-        if ([string]::IsNullOrWhiteSpace($ip)) { continue }
-        if ($ip -match ':') { "$ip/128" } else { "$ip/32" }
-    }
 }
 
 function Resolve-HostIPs {
@@ -173,25 +157,17 @@ function Resolve-HostIPs {
     try {
         if ([string]::IsNullOrWhiteSpace($DnsServer)) {
             $records = Resolve-DnsName -Name $HostName -Type A -ErrorAction SilentlyContinue
-            foreach ($r in $records) {
-                if ($r.IPAddress) { [void]$ips.Add($r.IPAddress) }
-            }
+            foreach ($r in $records) { if ($r.IPAddress) { [void]$ips.Add($r.IPAddress) } }
 
             $records = Resolve-DnsName -Name $HostName -Type AAAA -ErrorAction SilentlyContinue
-            foreach ($r in $records) {
-                if ($r.IPAddress) { [void]$ips.Add($r.IPAddress) }
-            }
+            foreach ($r in $records) { if ($r.IPAddress) { [void]$ips.Add($r.IPAddress) } }
         }
         else {
             $records = Resolve-DnsName -Name $HostName -Type A -Server $DnsServer -ErrorAction SilentlyContinue
-            foreach ($r in $records) {
-                if ($r.IPAddress) { [void]$ips.Add($r.IPAddress) }
-            }
+            foreach ($r in $records) { if ($r.IPAddress) { [void]$ips.Add($r.IPAddress) } }
 
             $records = Resolve-DnsName -Name $HostName -Type AAAA -Server $DnsServer -ErrorAction SilentlyContinue
-            foreach ($r in $records) {
-                if ($r.IPAddress) { [void]$ips.Add($r.IPAddress) }
-            }
+            foreach ($r in $records) { if ($r.IPAddress) { [void]$ips.Add($r.IPAddress) } }
         }
     }
     catch {
@@ -229,7 +205,6 @@ function Add-BypassRoute {
     )
 
     $prefix = if ($IP -match ':') { "$IP/128" } else { "$IP/32" }
-
     Remove-NetRoute -DestinationPrefix $prefix -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
     New-NetRoute -InterfaceIndex $IfIndex -DestinationPrefix $prefix -NextHop $NextHop -RouteMetric 1 -ErrorAction SilentlyContinue | Out-Null
 }
@@ -251,31 +226,20 @@ function Sync-BypassRoutesV4 {
     $resolved = @(Resolve-HostIPv4 -HostName $HostName)
 
     if (-not $resolved -or $resolved.Count -eq 0) {
-        Write-Warn "No IPv4 addresses resolved for $HostName; keeping existing IPv4 bypass routes."
+        Write-Warn "No IPv4 addresses resolved for $HostName; keeping existing bypass routes."
         return
     }
 
-    $toAdd = $resolved | Where-Object { $_ -notin $script:BypassIPv4 }
-    $toRemove = $script:BypassIPv4 | Where-Object { $_ -notin $resolved }
+    $toAdd    = $resolved              | Where-Object { $_ -notin $script:BypassIPv4 }
+    $toRemove = $script:BypassIPv4    | Where-Object { $_ -notin $resolved }
 
     foreach ($ip in $toAdd) {
-        try {
-            Add-BypassRoute -IP $ip -IfIndex $IfIndex -NextHop $NextHop
-            Write-Ok "Pinned $HostName => $ip to the physical NIC"
-        }
-        catch {
-            Write-Warn "Failed to add IPv4 bypass route for $ip"
-        }
+        try   { Add-BypassRoute -IP $ip -IfIndex $IfIndex -NextHop $NextHop; Write-Ok "Pinned $HostName => $ip to physical NIC" }
+        catch { Write-Warn "Failed to add IPv4 bypass route for $ip" }
     }
-
     foreach ($ip in $toRemove) {
-        try {
-            Remove-BypassRoute -IP $ip
-            Write-Log "Removed stale IPv4 bypass route for $ip"
-        }
-        catch {
-            Write-Warn "Failed to remove stale IPv4 bypass route for $ip"
-        }
+        try   { Remove-BypassRoute -IP $ip; Write-Log "Removed stale IPv4 bypass route for $ip" }
+        catch { Write-Warn "Failed to remove stale IPv4 bypass route for $ip" }
     }
 
     $script:BypassIPv4 = $resolved
@@ -289,32 +253,18 @@ function Sync-BypassRoutesV6 {
     )
 
     $resolved = @(Resolve-HostIPv6 -HostName $HostName)
+    if (-not $resolved -or $resolved.Count -eq 0) { return }
 
-    if (-not $resolved -or $resolved.Count -eq 0) {
-        return
-    }
-
-    $toAdd = $resolved | Where-Object { $_ -notin $script:BypassIPv6 }
+    $toAdd    = $resolved           | Where-Object { $_ -notin $script:BypassIPv6 }
     $toRemove = $script:BypassIPv6 | Where-Object { $_ -notin $resolved }
 
     foreach ($ip in $toAdd) {
-        try {
-            Add-BypassRoute -IP $ip -IfIndex $IfIndex -NextHop $NextHop
-            Write-Ok "Pinned $HostName => $ip to the physical NIC"
-        }
-        catch {
-            Write-Warn "Failed to add IPv6 bypass route for $ip"
-        }
+        try   { Add-BypassRoute -IP $ip -IfIndex $IfIndex -NextHop $NextHop; Write-Ok "Pinned $HostName => $ip to physical NIC" }
+        catch { Write-Warn "Failed to add IPv6 bypass route for $ip" }
     }
-
     foreach ($ip in $toRemove) {
-        try {
-            Remove-BypassRoute -IP $ip
-            Write-Log "Removed stale IPv6 bypass route for $ip"
-        }
-        catch {
-            Write-Warn "Failed to remove stale IPv6 bypass route for $ip"
-        }
+        try   { Remove-BypassRoute -IP $ip; Write-Log "Removed stale IPv6 bypass route for $ip" }
+        catch { Write-Warn "Failed to remove stale IPv6 bypass route for $ip" }
     }
 
     $script:BypassIPv6 = $resolved
@@ -333,7 +283,6 @@ function Wait-ForTcpPort {
             if ($connections) { return $true }
         }
         catch {
-            # Fallback to netstat on older systems
             $netstat = & netstat -ano 2>$null
             if ($netstat -match ":$Port\s") { return $true }
         }
@@ -370,88 +319,61 @@ function Wait-ForInterface {
 }
 
 function Configure-TunnelInterface {
-    param(
-        [Parameter(Mandatory=$true)][string]$Alias
-    )
+    param([Parameter(Mandatory=$true)][string]$Alias)
 
     $adapter = Get-NetAdapter -Name $Alias -ErrorAction SilentlyContinue
-    if (-not $adapter) {
-        Fail "The TUN interface '$Alias' was not found."
-    }
+    if (-not $adapter) { Fail "The TUN interface '$Alias' was not found." }
 
     $script:TunnelIfIndex = $adapter.ifIndex
 
-    try {
-        Set-NetIPInterface -InterfaceIndex $script:TunnelIfIndex -Dhcp Disabled -ErrorAction SilentlyContinue | Out-Null
-    }
-    catch {}
+    try { Set-NetIPInterface -InterfaceIndex $script:TunnelIfIndex -Dhcp Disabled -ErrorAction SilentlyContinue | Out-Null } catch {}
 
+    # 清理已有 IP
     try {
         Get-NetIPAddress -InterfaceIndex $script:TunnelIfIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue |
             Where-Object { $_.IPAddress -eq $TunnelIPv4Address } |
             ForEach-Object { Remove-NetIPAddress -InputObject $_ -Confirm:$false -ErrorAction SilentlyContinue | Out-Null }
-    }
-    catch {}
+    } catch {}
 
     try {
         Get-NetIPAddress -InterfaceIndex $script:TunnelIfIndex -AddressFamily IPv6 -ErrorAction SilentlyContinue |
             Where-Object { $_.IPAddress -eq $TunnelIPv6Address } |
             ForEach-Object { Remove-NetIPAddress -InputObject $_ -Confirm:$false -ErrorAction SilentlyContinue | Out-Null }
-    }
-    catch {}
+    } catch {}
+
+    # 设置 IP
+    try {
+        New-NetIPAddress -InterfaceIndex $script:TunnelIfIndex `
+            -IPAddress $TunnelIPv4Address -PrefixLength $TunnelIPv4PrefixLength `
+            -AddressFamily IPv4 -ErrorAction SilentlyContinue | Out-Null
+    } catch { Write-Warn "Failed to set IPv4 address on $Alias" }
 
     try {
         New-NetIPAddress -InterfaceIndex $script:TunnelIfIndex `
-            -IPAddress $TunnelIPv4Address `
-            -PrefixLength $TunnelIPv4PrefixLength `
-            -AddressFamily IPv4 `
-            -ErrorAction SilentlyContinue | Out-Null
-    }
-    catch {
-        Write-Warn "Failed to set IPv4 address on $Alias"
-    }
+            -IPAddress $TunnelIPv6Address -PrefixLength $TunnelIPv6PrefixLength `
+            -AddressFamily IPv6 -ErrorAction SilentlyContinue | Out-Null
+    } catch { Write-Warn "Failed to set IPv6 address on $Alias" }
 
-    try {
-        New-NetIPAddress -InterfaceIndex $script:TunnelIfIndex `
-            -IPAddress $TunnelIPv6Address `
-            -PrefixLength $TunnelIPv6PrefixLength `
-            -AddressFamily IPv6 `
-            -ErrorAction SilentlyContinue | Out-Null
-    }
-    catch {
-        Write-Warn "Failed to set IPv6 address on $Alias"
-    }
-
+    # 清理再添加默认路由
     Remove-NetRoute -DestinationPrefix '0.0.0.0/0' -InterfaceIndex $script:TunnelIfIndex -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
-    Remove-NetRoute -DestinationPrefix '::/0' -InterfaceIndex $script:TunnelIfIndex -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
+    Remove-NetRoute -DestinationPrefix '::/0'       -InterfaceIndex $script:TunnelIfIndex -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
 
     try {
         New-NetRoute -InterfaceIndex $script:TunnelIfIndex -DestinationPrefix '0.0.0.0/0' -NextHop '0.0.0.0' -RouteMetric 1 -ErrorAction Stop | Out-Null
-    }
-    catch {
-        Fail "Failed to add the IPv4 default route via $Alias."
-    }
+    } catch { Fail "Failed to add the IPv4 default route via $Alias." }
 
     try {
         New-NetRoute -InterfaceIndex $script:TunnelIfIndex -DestinationPrefix '::/0' -NextHop '::' -RouteMetric 1 -ErrorAction SilentlyContinue | Out-Null
-    }
-    catch {
-        Write-Warn "Failed to add IPv6 default route via $Alias"
-    }
+    } catch { Write-Warn "Failed to add IPv6 default route via $Alias" }
 
-    try {
-        Set-NetIPInterface -InterfaceIndex $script:TunnelIfIndex -InterfaceMetric 1 -ErrorAction SilentlyContinue | Out-Null
-    }
-    catch {}
+    try { Set-NetIPInterface -InterfaceIndex $script:TunnelIfIndex -InterfaceMetric 1 -ErrorAction SilentlyContinue | Out-Null } catch {}
 
-    $script:TunConfigured = $true
+    $script:TunConfigured    = $true
     $script:RoutesConfigured = $true
     Write-Ok "Tunnel interface '$Alias' is configured."
 }
 
 function Cleanup {
-    $exitCode = $LASTEXITCODE
-
     Write-Host ''
     Write-Log 'Shutting down...'
 
@@ -461,144 +383,100 @@ function Cleanup {
 
     if ($script:RoutesConfigured -and $script:TunnelIfIndex) {
         try { Remove-NetRoute -DestinationPrefix '0.0.0.0/0' -InterfaceIndex $script:TunnelIfIndex -Confirm:$false -ErrorAction SilentlyContinue | Out-Null } catch {}
-        try { Remove-NetRoute -DestinationPrefix '::/0' -InterfaceIndex $script:TunnelIfIndex -Confirm:$false -ErrorAction SilentlyContinue | Out-Null } catch {}
-    }
-
-    if ($script:TunConfigured -and $script:TunnelIfIndex) {
-        try {
-            $adapter = Get-NetAdapter -InterfaceIndex $script:TunnelIfIndex -ErrorAction SilentlyContinue
-            if ($adapter) {
-                try { Disable-NetAdapter -Name $adapter.Name -Confirm:$false -ErrorAction SilentlyContinue | Out-Null } catch {}
-            }
-        }
-        catch {}
+        try { Remove-NetRoute -DestinationPrefix '::/0'       -InterfaceIndex $script:TunnelIfIndex -Confirm:$false -ErrorAction SilentlyContinue | Out-Null } catch {}
     }
 
     if ($script:Tun2SocksProcess -and -not $script:Tun2SocksProcess.HasExited) {
-        try {
-            Stop-Process -Id $script:Tun2SocksProcess.Id -Force -ErrorAction SilentlyContinue
-            Write-Log "Stopped tun2socks (pid $($script:Tun2SocksProcess.Id))"
-        }
-        catch {}
+        try { Stop-Process -Id $script:Tun2SocksProcess.Id -Force -ErrorAction SilentlyContinue; Write-Log "Stopped tun2socks (pid $($script:Tun2SocksProcess.Id))" } catch {}
     }
 
     if ($script:ClientProcess -and -not $script:ClientProcess.HasExited) {
-        try {
-            Stop-Process -Id $script:ClientProcess.Id -Force -ErrorAction SilentlyContinue
-            Write-Log "Stopped client (pid $($script:ClientProcess.Id))"
-        }
-        catch {}
+        try { Stop-Process -Id $script:ClientProcess.Id -Force -ErrorAction SilentlyContinue; Write-Log "Stopped client (pid $($script:ClientProcess.Id))" } catch {}
     }
 
     Write-Ok 'Cleanup complete.'
-    if ($exitCode -ne $null) { exit $exitCode }
 }
 
-try {
-    if (-not (Test-Path $ClientPath)) {
-        Fail "Client binary not found: $ClientPath"
-    }
+# ── Main ──────────────────────────────────────────────────────────────────────
 
-    if (-not (Test-Path $Tun2SocksPath)) {
-        Fail "tun2socks binary not found: $Tun2SocksPath"
-    }
+try {
+    if (-not (Test-Path $ClientPath))    { Fail "Client binary not found: $ClientPath" }
+    if (-not (Test-Path $Tun2SocksPath)) { Fail "tun2socks binary not found: $Tun2SocksPath" }
 
     $physical4 = Get-PhysicalGatewayInfo -AddressFamily IPv4
-    if (-not $physical4) {
-        Fail 'Could not detect an IPv4 physical default route.'
-    }
+    if (-not $physical4) { Fail 'Could not detect an IPv4 physical default route.' }
 
-    $script:PhysicalIfIndex = $physical4.IfIndex
+    $script:PhysicalIfIndex  = $physical4.IfIndex
     $script:PhysicalGateway4 = $physical4.Gateway
-    $script:PhysicalIfAlias = $physical4.Alias
-
-    Write-Log "Physical IPv4 route detected on '$($script:PhysicalIfAlias)' via $($script:PhysicalGateway4)"
+    $script:PhysicalIfAlias  = $physical4.Alias
+    Write-Log "Physical IPv4: '$($script:PhysicalIfAlias)' via $($script:PhysicalGateway4)"
 
     $physical6 = Get-PhysicalGatewayInfo -AddressFamily IPv6
     if ($physical6) {
         $script:PhysicalIfIndex6 = $physical6.IfIndex
         $script:PhysicalGateway6 = $physical6.Gateway
-        Write-Log "Physical IPv6 route detected on '$($physical6.Alias)' via $($script:PhysicalGateway6)"
-    }
-    else {
-        Write-Warn 'No IPv6 physical default route found; IPv6 bypass routes will be skipped.'
+        Write-Log "Physical IPv6: '$($physical6.Alias)' via $($script:PhysicalGateway6)"
+    } else {
+        Write-Warn 'No IPv6 physical default route found.'
     }
 
-    Write-Log "Resolving server domain for bypass: $ServerHost"
+    Write-Log "Resolving bypass IPs for: $ServerHost"
     Sync-BypassRoutesV4 -HostName $ServerHost -IfIndex $script:PhysicalIfIndex -NextHop $script:PhysicalGateway4
-
     if ($physical6) {
         Sync-BypassRoutesV6 -HostName $ServerHost -IfIndex $script:PhysicalIfIndex6 -NextHop $script:PhysicalGateway6
     }
+    Write-Ok 'Routing isolation ready.'
 
-    Write-Ok 'Routing isolation is ready.'
-
-    $clientWorkDir = Split-Path -Parent $ClientPath
-    if ([string]::IsNullOrWhiteSpace($clientWorkDir)) {
-        $clientWorkDir = (Get-Location).Path
-    }
-
+    $clientWorkDir = Split-Path -Parent (Resolve-Path $ClientPath)
     Write-Log "Starting client: $ClientPath $($ClientArgs -join ' ')"
-    $script:ClientProcess = Start-Process -FilePath $ClientPath -ArgumentList $ClientArgs -WorkingDirectory $clientWorkDir -PassThru -WindowStyle Hidden
+    $script:ClientProcess = Start-Process -FilePath $ClientPath -ArgumentList $ClientArgs `
+        -WorkingDirectory $clientWorkDir -PassThru -WindowStyle Hidden
 
     Start-Sleep -Milliseconds 300
-    if ($script:ClientProcess.HasExited) {
-        Fail 'The client process exited immediately. Check the client arguments.'
-    }
+    if ($script:ClientProcess.HasExited) { Fail 'Client exited immediately. Check arguments.' }
 
-    Write-Log "Waiting for SOCKS5 on $SocksHost:$SocksPort..."
+    # FIX 2: $SocksHost:$SocksPort 里冒号被解析为变量修饰符，用 ${SocksHost} 包裹
+    Write-Log "Waiting for SOCKS5 on ${SocksHost}:${SocksPort}..."
     if (-not (Wait-ForTcpPort -Port $SocksPort -TimeoutSec 10)) {
         Fail "SOCKS5 port $SocksPort did not open within 10 seconds."
     }
-    Write-Ok "SOCKS5 is listening on port $SocksPort."
+    Write-Ok "SOCKS5 listening on port $SocksPort."
 
-    $tun2socksArgs = @(
-        '-device', $InterfaceName,
-        '-proxy', "socks5://$SocksHost`:$SocksPort",
-        '-loglevel', 'error'
-    )
-
-    $tunWorkDir = Split-Path -Parent $Tun2SocksPath
-    if ([string]::IsNullOrWhiteSpace($tunWorkDir)) {
-        $tunWorkDir = (Get-Location).Path
-    }
-
+    $tun2socksArgs = @('-device', $InterfaceName, '-proxy', "socks5://${SocksHost}:${SocksPort}", '-loglevel', 'error')
+    $tunWorkDir    = Split-Path -Parent (Resolve-Path $Tun2SocksPath)
     Write-Log "Starting tun2socks: $Tun2SocksPath $($tun2socksArgs -join ' ')"
-    $script:Tun2SocksProcess = Start-Process -FilePath $Tun2SocksPath -ArgumentList $tun2socksArgs -WorkingDirectory $tunWorkDir -PassThru -WindowStyle Hidden
+    $script:Tun2SocksProcess = Start-Process -FilePath $Tun2SocksPath -ArgumentList $tun2socksArgs `
+        -WorkingDirectory $tunWorkDir -PassThru -WindowStyle Hidden
 
     Write-Log "Waiting for TUN interface '$InterfaceName'..."
     $adapter = Wait-ForInterface -Alias $InterfaceName -TimeoutSec 5
-    if (-not $adapter) {
-        Fail "The TUN interface '$InterfaceName' did not appear within 5 seconds."
-    }
+    if (-not $adapter) { Fail "TUN interface '$InterfaceName' did not appear within 5 seconds." }
 
     Configure-TunnelInterface -Alias $InterfaceName
 
+    $bypassList = (($script:BypassIPv4 + $script:BypassIPv6) -join ', ')
+    if ([string]::IsNullOrEmpty($bypassList)) { $bypassList = '(none)' }
+
     Write-Host ''
     Write-Host 'All traffic is now routed through the proxy.' -ForegroundColor Green
-    Write-Host ("  Physical NIC:   {0} (ifIndex {1})" -f $script:PhysicalIfAlias, $script:PhysicalIfIndex)
-    Write-Host ("  Server domain:  {0}" -f $ServerHost)
-    Write-Host ("  Bypass IPs:     {0}" -f ((($script:BypassIPv4 + $script:BypassIPv6) -join ', ') -replace '^$', '(none)'))
-    Write-Host ("  SOCKS5:         {0}:{1}" -f $SocksHost, $SocksPort)
-    Write-Host ("  TUN interface:  {0}" -f $InterfaceName)
-    Write-Host ("  Client PID:     {0}" -f $script:ClientProcess.Id)
-    Write-Host ("  tun2socks PID:  {0}" -f $script:Tun2SocksProcess.Id)
-    Write-Host ("  Refresh every:  {0} seconds" -f $RefreshIntervalSec)
+    Write-Host "  Physical NIC  : $($script:PhysicalIfAlias) (ifIndex $($script:PhysicalIfIndex))"
+    Write-Host "  Server domain : $ServerHost"
+    Write-Host "  Bypass IPs    : $bypassList"
+    Write-Host "  SOCKS5        : ${SocksHost}:${SocksPort}"
+    Write-Host "  TUN interface : $InterfaceName"
+    Write-Host "  Client PID    : $($script:ClientProcess.Id)"
+    Write-Host "  tun2socks PID : $($script:Tun2SocksProcess.Id)"
+    Write-Host "  Refresh every : $RefreshIntervalSec seconds"
     Write-Host ''
     Write-Host 'Press Ctrl+C to stop and clean up.' -ForegroundColor White
     Write-Host ''
 
+    # 主循环：监控进程 + 定期刷新 bypass 路由
     while ($true) {
-        if ($script:ClientProcess.HasExited) {
-            Fail 'The client process exited.'
-        }
-
-        if ($script:Tun2SocksProcess.HasExited) {
-            Fail 'tun2socks exited.'
-        }
+        if ($script:ClientProcess.HasExited)    { Fail 'Client process exited.' }
+        if ($script:Tun2SocksProcess.HasExited) { Fail 'tun2socks exited.' }
 
         Sync-BypassRoutesV4 -HostName $ServerHost -IfIndex $script:PhysicalIfIndex -NextHop $script:PhysicalGateway4
-
         if ($physical6 -and $script:PhysicalIfIndex6 -and $script:PhysicalGateway6) {
             Sync-BypassRoutesV6 -HostName $ServerHost -IfIndex $script:PhysicalIfIndex6 -NextHop $script:PhysicalGateway6
         }
