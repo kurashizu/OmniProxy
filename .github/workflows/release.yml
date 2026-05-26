@@ -15,10 +15,20 @@ jobs:
                       ext: .exe
                       zip: socks5-proxy-windows-x86_64-msvc.zip
 
+                    - target: aarch64-pc-windows-msvc
+                      os: windows-11-arm
+                      ext: .exe
+                      zip: socks5-proxy-windows-aarch64-msvc.zip
+
                     - target: x86_64-unknown-linux-musl
                       os: ubuntu-latest
                       ext: ""
                       zip: socks5-proxy-linux-x86_64-musl.zip
+
+                    - target: aarch64-unknown-linux-musl
+                      os: ubuntu-24.04-arm
+                      ext: ""
+                      zip: socks5-proxy-linux-aarch64-musl.zip
 
                     - target: x86_64-apple-darwin
                       os: macos-latest
@@ -42,8 +52,9 @@ jobs:
                   targets: ${{ matrix.target }}
 
             - name: Install musl tools
-              if: matrix.os == 'ubuntu-latest'
-              run: sudo apt-get update && sudo apt-get install -y musl-tools
+              if: startsWith(matrix.os, 'ubuntu')
+              run: sudo apt-get update && sudo apt-get install -y musl-tools zip unzip
+              shell: bash
 
             - name: Cache cargo
               uses: Swatinem/rust-cache@v2
@@ -56,7 +67,7 @@ jobs:
             # ── Build ───────────────────────────────────────────────────────────────
             - name: Build client
               env:
-                  RUSTFLAGS: ${{ matrix.os == 'windows-latest' && '-Ctarget-feature=+crt-static' || '' }}
+                  RUSTFLAGS: ${{ startsWith(matrix.os, 'windows') && '-Ctarget-feature=+crt-static' || '' }}
               run: |
                   cargo build --release --manifest-path client/Cargo.toml --target ${{ matrix.target }}
                   mkdir -p dist
@@ -65,7 +76,7 @@ jobs:
 
             - name: Build server
               env:
-                  RUSTFLAGS: ${{ matrix.os == 'windows-latest' && '-Ctarget-feature=+crt-static' || '' }}
+                  RUSTFLAGS: ${{ startsWith(matrix.os, 'windows') && '-Ctarget-feature=+crt-static' || '' }}
               run: |
                   cargo build --release --manifest-path server/Cargo.toml --target ${{ matrix.target }}
                   mkdir -p dist
@@ -74,7 +85,7 @@ jobs:
 
             - name: Build proxy
               env:
-                  RUSTFLAGS: ${{ matrix.os == 'windows-latest' && '-Ctarget-feature=+crt-static' || '' }}
+                  RUSTFLAGS: ${{ startsWith(matrix.os, 'windows') && '-Ctarget-feature=+crt-static' || '' }}
               run: |
                   cargo build --release --manifest-path proxy/Cargo.toml --target ${{ matrix.target }}
                   mkdir -p dist
@@ -91,13 +102,23 @@ jobs:
               shell: bash
 
             # ── Download tun2socks ──────────────────────────────────────────────────
-            - name: Download tun2socks (Linux)
-              if: matrix.os == 'ubuntu-latest'
+            - name: Download tun2socks (Linux x86_64)
+              if: matrix.target == 'x86_64-unknown-linux-musl'
               continue-on-error: true
               run: |
                   curl -sL https://github.com/xjasonlyu/tun2socks/releases/download/v2.6.0/tun2socks-linux-amd64.zip -o tun2socks.zip
                   unzip -o tun2socks.zip
                   mv tun2socks-linux-amd64 tun2socks
+                  chmod +x tun2socks
+              shell: bash
+
+            - name: Download tun2socks (Linux ARM64)
+              if: matrix.target == 'aarch64-unknown-linux-musl'
+              continue-on-error: true
+              run: |
+                  curl -sL https://github.com/xjasonlyu/tun2socks/releases/download/v2.6.0/tun2socks-linux-arm64.zip -o tun2socks.zip
+                  unzip -o tun2socks.zip
+                  mv tun2socks-linux-arm64 tun2socks
                   chmod +x tun2socks
               shell: bash
 
@@ -121,8 +142,8 @@ jobs:
                   chmod +x tun2socks
               shell: bash
 
-            - name: Download tun2socks (Windows)
-              if: matrix.os == 'windows-latest'
+            - name: Download tun2socks (Windows x64)
+              if: matrix.target == 'x86_64-pc-windows-msvc'
               continue-on-error: true
               run: |
                   curl.exe -sL https://github.com/xjasonlyu/tun2socks/releases/download/v2.6.0/tun2socks-windows-amd64-v3.zip -o tun2socks.zip
@@ -130,19 +151,44 @@ jobs:
                   mv tun2socks-windows-amd64-v3.exe tun2socks.exe
               shell: powershell
 
+            - name: Download tun2socks (Windows ARM64)
+              if: matrix.target == 'aarch64-pc-windows-msvc'
+              continue-on-error: true
+              run: |
+                  curl.exe -sL https://github.com/xjasonlyu/tun2socks/releases/download/v2.6.0/tun2socks-windows-arm64.zip -o tun2socks.zip
+                  Expand-Archive -Force tun2socks.zip -DestinationPath .
+                  mv tun2socks-windows-arm64.exe tun2socks.exe
+              shell: powershell
+
             - name: Download wintun (Windows)
-              if: matrix.os == 'windows-latest'
+              if: startsWith(matrix.os, 'windows')
               continue-on-error: true
               run: |
                   curl.exe -sL https://www.wintun.net/builds/wintun-0.14.1.zip -o wintun.zip
+
                   Expand-Archive -Force wintun.zip -DestinationPath .
-                  $dll = Get-ChildItem -Recurse -Filter wintun.dll | Select-Object -First 1 -ExpandProperty FullName
+
+                  if ("${{ matrix.target }}" -eq "x86_64-pc-windows-msvc") {
+                      $dll = Get-ChildItem `
+                          -Recurse `
+                          -Path */bin/amd64/wintun.dll |
+                          Select-Object -First 1 -ExpandProperty FullName
+                  }
+
+                  elseif ("${{ matrix.target }}" -eq "aarch64-pc-windows-msvc") {
+                      $dll = Get-ChildItem `
+                          -Recurse `
+                          -Path */bin/arm64/wintun.dll |
+                          Select-Object -First 1 -ExpandProperty FullName
+                  }
+
                   cp $dll dist/
+
               shell: powershell
 
             # ── Package ──────────────────────────────────────────────────────────────
             - name: Package Linux
-              if: matrix.os == 'ubuntu-latest'
+              if: startsWith(matrix.os, 'ubuntu')
               run: |
                   cp README.md dist/ || true
                   cp tun2socks dist/ || true
@@ -160,7 +206,7 @@ jobs:
               shell: bash
 
             - name: Package Windows
-              if: matrix.os == 'windows-latest'
+              if: startsWith(matrix.os, 'windows')
               run: |
                   if (Test-Path README.md) { cp README.md dist/ }
                   if (Test-Path tun2socks.exe) { cp tun2socks.exe dist/ }

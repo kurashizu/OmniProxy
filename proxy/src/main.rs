@@ -48,7 +48,9 @@ struct Cli {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
+    #[serde(default)]
     pub client: PathBuf,
+    #[serde(default)]
     pub tun2socks: PathBuf,
     pub server: String,
     #[serde(default)]
@@ -92,18 +94,12 @@ impl Config {
                 .with_context(|| format!("parse config: {}", path.display()))?
         } else {
             Config {
-                client: cli
-                    .client
-                    .clone()
-                    .context("--client is required without --config")?,
-                tun2socks: cli
-                    .tun2socks
-                    .clone()
-                    .context("--tun2socks is required without --config")?,
+                client: cli.client.clone().unwrap_or_default(),
+                tun2socks: cli.tun2socks.clone().unwrap_or_default(),
                 server: cli
                     .server
                     .clone()
-                    .context("--server is required without --config")?,
+                    .context("--server or -c config is required")?,
                 token: cli.token.clone().unwrap_or_default(),
                 socks_port: cli.socks_port.unwrap_or_else(default_socks_port),
                 tun_name: cli.tun_name.clone().unwrap_or_else(default_tun_name),
@@ -145,6 +141,24 @@ impl Config {
             cfg.phys_iface = Some(v.clone());
         }
 
+        // Automatically complete relative path mappings based on working platform
+        let self_dir = std::env::current_exe()
+            .map(|p| p.parent().map(|parent| parent.to_path_buf()))
+            .unwrap_or(None)
+            .unwrap_or_else(|| PathBuf::from("."));
+
+        #[cfg(windows)]
+        let (ext_client, ext_t2s) = ("client.exe", "tun2socks.exe");
+        #[cfg(not(windows))]
+        let (ext_client, ext_t2s) = ("client", "tun2socks");
+
+        if cfg.client.as_os_str().is_empty() {
+            cfg.client = self_dir.join(ext_client);
+        }
+        if cfg.tun2socks.as_os_str().is_empty() {
+            cfg.tun2socks = self_dir.join(ext_t2s);
+        }
+
         Ok(cfg)
     }
 }
@@ -158,7 +172,6 @@ async fn run_stack(cfg: Arc<Config>, phys: PhysicalRoute) -> Result<()> {
     );
 
     // ── 1. Start tun2socks FIRST ─────────────────────────────────────────────
-    // 先让 tun2socks 启动，以便在系统层初始化并创建 TUN 虚体网卡。
     let socks_addr = format!("127.0.0.1:{}", cfg.socks_port);
     let t2s_args = vec![
         "-device".to_string(),
@@ -166,17 +179,13 @@ async fn run_stack(cfg: Arc<Config>, phys: PhysicalRoute) -> Result<()> {
         "-proxy".to_string(),
         format!("socks5://{socks_addr}"),
         "-loglevel".to_string(),
-        "warning".to_string(),
+        "error".to_string(), // Adjusted: tuned level to error to avoid noisy refuse loops
     ];
     let mut t2s = process::spawn(&cfg.tun2socks, &t2s_args, "tun2socks")?;
     info!("[stack] tun2socks started (pid {})", t2s.id().unwrap_or(0));
 
-    // ── 2. Bring up TUN + Configure Routes ────────────────────────────────────
-    // 已经移除了之前的 500ms 盲等。tun_up 内部会在 Windows 环境下优雅地轮询等待网卡就绪。
-    route::tun_up(&cfg, &phys).await?;
-    info!("[stack] TUN {} is up, routes configured", cfg.tun_name);
-
-    // ── 3. Start client ───────────────────────────────────────────────────────
+    // ── 2. Start client SECOND ───────────────────────────────────────────────
+    // Spin up the core backend proxy outbound before making network routing mutations
     let mut client_args = vec![
         "--server".to_string(),
         cfg.server.clone(),
@@ -191,6 +200,13 @@ async fn run_stack(cfg: Arc<Config>, phys: PhysicalRoute) -> Result<()> {
     }
     let mut client = process::spawn(&cfg.client, &client_args, "client")?;
     info!("[stack] client started (pid {})", client.id().unwrap_or(0));
+
+    // Allow a 100ms socket binding breather room to clear race condition
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // ── 3. Bring up TUN + Configure Routes LAST ──────────────────────────────
+    route::tun_up(&cfg, &phys).await?;
+    info!("[stack] TUN {} is up, routes configured", cfg.tun_name);
 
     // ── 4. Wait for either child to exit ─────────────────────────────────────
     let result = tokio::select! {
