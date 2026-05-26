@@ -40,6 +40,7 @@ jobs:
           workspaces: |
             client
             server
+            proxy
 
       # ── Build ───────────────────────────────────────────────────────────────
       - name: Build client
@@ -58,6 +59,15 @@ jobs:
           cargo build --release --manifest-path server/Cargo.toml --target ${{ matrix.target }}
           mkdir -p dist
           cp server/target/${{ matrix.target }}/release/server${{ matrix.ext }} dist/
+        shell: bash
+
+      - name: Build proxy
+        env:
+          RUSTFLAGS: ${{ matrix.os == 'windows-latest' && '-Ctarget-feature=+crt-static' || '' }}
+        run: |
+          cargo build --release --manifest-path proxy/Cargo.toml --target ${{ matrix.target }}
+          mkdir -p dist
+          cp proxy/target/${{ matrix.target }}/release/proxy${{ matrix.ext }} dist/
         shell: bash
 
       # ── Download tun2socks ──────────────────────────────────────────────────
@@ -94,7 +104,6 @@ jobs:
       - name: Package Linux
         if: matrix.os == 'ubuntu-latest'
         run: |
-          cp scripts/proxy.sh dist/
           cp README.md dist/
           cp tun2socks dist/ || true
           zip -r ${{ matrix.zip }} dist/
@@ -104,7 +113,6 @@ jobs:
         if: matrix.os == 'windows-latest'
         run: |
           cp README.md dist/
-          cp scripts/proxy.ps1 dist/
           if (Test-Path tun2socks.exe) { cp tun2socks.exe dist/ }
           Compress-Archive -Path dist -DestinationPath ${{ matrix.zip }}
         shell: powershell

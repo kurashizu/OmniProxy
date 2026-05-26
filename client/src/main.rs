@@ -9,7 +9,7 @@ use futures_util::{SinkExt, StreamExt};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -83,6 +83,9 @@ struct Cli {
     token: String,
     #[arg(long, default_value = "")]
     server: String,
+    /// 绑定此源 IP 出站，防止走 TUN 路由（Windows 用；Linux 用 uidrange 路由隔离则不需要）
+    #[arg(long)]
+    outbound_ip: Option<String>,
     #[arg(long)]
     config: Option<String>,
 }
@@ -97,6 +100,8 @@ struct Config {
     token: String,
     #[serde(default)]
     server: String,
+    #[serde(default)]
+    outbound_ip: Option<String>,
 }
 
 fn default_addr() -> String {
@@ -123,6 +128,7 @@ impl Config {
             port: cli.port,
             token: cli.token,
             server: cli.server,
+            outbound_ip: cli.outbound_ip,
         })
     }
 
@@ -136,15 +142,40 @@ impl Config {
     }
 }
 
-// ── 服务器信息 ────────────────────────────────────────────────────────────────
+// ── 出站 IP 探测 ──────────────────────────────────────────────────────────────
+//
+// 原理：向服务器 IP 发起一个 UDP connect（不真正发包），
+// 让内核选出口，然后读 local_addr。
+// 在 TUN 接管路由后调用此函数会返回 TUN 的虚拟 IP，
+// 所以只在 --outbound-ip 未指定且确实需要自动探测时才用。
+//
+// 正确用法：
+//   Linux  → 用 uidrange 路由隔离，无需此函数
+//   Windows → proxy.ps1 传入 --outbound-ip <物理网卡IP>
+
+fn detect_outbound_ip(server_addr: SocketAddr) -> Option<IpAddr> {
+    let probe_addr: SocketAddr = match server_addr {
+        SocketAddr::V4(_) => "0.0.0.0:0".parse().unwrap(),
+        SocketAddr::V6(_) => "[::]:0".parse().unwrap(),
+    };
+    let sock = std::net::UdpSocket::bind(probe_addr).ok()?;
+    sock.connect(server_addr).ok()?;
+    Some(sock.local_addr().ok()?.ip())
+}
+
+// ── 服务器信息（启动时解析 DNS 一次）────────────────────────────────────────
 
 #[derive(Debug, Clone)]
 struct ServerInfo {
+    /// 缓存的服务器 IP:Port
     addr: SocketAddr,
+    /// 原始域名，TLS SNI 用
     host: String,
     scheme: String,
     path: String,
     token: String,
+    /// 出站绑定 IP（None = 不绑定，走系统默认路由）
+    outbound_ip: Option<IpAddr>,
 }
 
 impl ServerInfo {
@@ -171,12 +202,25 @@ impl ServerInfo {
             .with_context(|| format!("no addr for {host}"))?;
 
         info!("resolved {host}:{port} → {addr}");
+
+        // 解析 outbound_ip
+        let outbound_ip = if let Some(ref ip_str) = cfg.outbound_ip {
+            let ip: IpAddr = ip_str
+                .parse()
+                .with_context(|| format!("invalid outbound-ip: {ip_str}"))?;
+            info!("outbound IP: {ip} (from config/cli)");
+            Some(ip)
+        } else {
+            None
+        };
+
         Ok(ServerInfo {
             addr,
             host,
             scheme,
             path,
             token: cfg.token.clone(),
+            outbound_ip,
         })
     }
 
@@ -190,7 +234,7 @@ impl ServerInfo {
     }
 }
 
-// ── WS 连接 ───────────────────────────────────────────────────────────────────
+// ── WS 连接（带 outbound_ip 绑定）────────────────────────────────────────────
 
 type WsStream = tokio_tungstenite::WebSocketStream<tokio_rustls::client::TlsStream<TcpStream>>;
 
@@ -198,10 +242,28 @@ async fn build_ws(srv: &ServerInfo) -> Result<WsStream> {
     use rustls::pki_types::ServerName;
     use tokio_rustls::TlsConnector;
 
-    let tcp = TcpStream::connect(srv.addr)
-        .await
-        .with_context(|| format!("tcp connect to {}", srv.addr))?;
+    // ── TCP 连接（可选绑定源 IP）──────────────────────────────────────────────
+    let tcp = if let Some(outbound_ip) = srv.outbound_ip {
+        // bind 物理网卡 IP → 内核强制从该网卡出去，不走 TUN
+        let socket = match outbound_ip {
+            IpAddr::V4(_) => tokio::net::TcpSocket::new_v4()?,
+            IpAddr::V6(_) => tokio::net::TcpSocket::new_v6()?,
+        };
+        socket
+            .bind(SocketAddr::new(outbound_ip, 0))
+            .with_context(|| format!("bind outbound_ip {outbound_ip}: IP可能已失效(网络切换?)"))?;
+        socket
+            .connect(srv.addr)
+            .await
+            .with_context(|| format!("tcp connect to {} via {outbound_ip}", srv.addr))?
+    } else {
+        // 不绑定，走系统路由（Linux uidrange 隔离场景）
+        TcpStream::connect(srv.addr)
+            .await
+            .with_context(|| format!("tcp connect to {}", srv.addr))?
+    };
 
+    // ── TLS（SNI = 域名，不是 IP）────────────────────────────────────────────
     let tls_config = Arc::new(
         rustls::ClientConfig::builder()
             .with_root_certificates(rustls::RootCertStore {
@@ -218,6 +280,7 @@ async fn build_ws(srv: &ServerInfo) -> Result<WsStream> {
         .await
         .with_context(|| format!("tls handshake with {}", srv.host))?;
 
+    // ── WS 握手 ───────────────────────────────────────────────────────────────
     let uri = format!("{}://{}{}", srv.scheme, srv.host_header(), srv.path);
     let mut req = Request::builder()
         .uri(&uri)
@@ -235,16 +298,12 @@ async fn build_ws(srv: &ServerInfo) -> Result<WsStream> {
     Ok(ws)
 }
 
-// ── Mux 内部状态（共享） ──────────────────────────────────────────────────────
+// ── Mux 内部状态 ──────────────────────────────────────────────────────────────
 
 struct MuxInner {
-    // stream_id → 下行数据 channel
     streams: HashMap<u32, mpsc::Sender<Bytes>>,
-    // stream_id → 连接结果 oneshot
     connect_notify: HashMap<u32, oneshot::Sender<Result<()>>>,
-    // UDP 回包 channel
     udp_tx: Option<mpsc::Sender<(String, u16, Bytes)>>,
-    // 出帧 channel（发给 WS writer task）
     frame_tx: Option<mpsc::Sender<Bytes>>,
 }
 
@@ -257,7 +316,6 @@ impl MuxInner {
             frame_tx: None,
         }
     }
-
     fn clear(&mut self) {
         self.streams.clear();
         self.connect_notify.clear();
@@ -266,12 +324,13 @@ impl MuxInner {
     }
 }
 
-// ── Mux（带自动重连） ─────────────────────────────────────────────────────────
+// ── Mux（带自动重连 + outbound_ip 热更新）────────────────────────────────────
 
 struct Mux {
     next_id: AtomicU32,
     inner: RwLock<MuxInner>,
-    srv: Arc<ServerInfo>,
+    /// 当前使用的 ServerInfo（含 outbound_ip），重连时可能更新
+    srv: RwLock<Arc<ServerInfo>>,
 }
 
 impl Mux {
@@ -279,7 +338,7 @@ impl Mux {
         Mux {
             next_id: AtomicU32::new(1),
             inner: RwLock::new(MuxInner::new()),
-            srv,
+            srv: RwLock::new(srv),
         }
     }
 
@@ -292,7 +351,6 @@ impl Mux {
         }
     }
 
-    // 获取出帧 channel，如果没有（WS 断了）则返回 None
     async fn frame_tx(&self) -> Option<mpsc::Sender<Bytes>> {
         self.inner.read().await.frame_tx.clone()
     }
@@ -304,34 +362,51 @@ impl Mux {
             .map_err(|_| anyhow::anyhow!("ws writer closed"))
     }
 
-    // 建立新 WS 连接，启动 writer + dispatcher
-    // 返回一个 oneshot，当连接断开时触发（用于外部重连循环）
-    async fn connect(self: &Arc<Self>) -> Result<tokio::sync::oneshot::Receiver<()>> {
-        let ws = build_ws(&self.srv).await?;
+    /// 建立 WS 连接。如果有 outbound_ip 但 bind 失败（网络切换导致 IP 失效），
+    /// 则自动探测新出站 IP 并重试一次。
+    async fn connect(self: &Arc<Self>) -> Result<oneshot::Receiver<()>> {
+        let srv = self.srv.read().await.clone();
+
+        let ws = match build_ws(&srv).await {
+            Ok(ws) => ws,
+            Err(e) if srv.outbound_ip.is_some() => {
+                // bind 失败 → 可能是网络切换，探测新出站 IP
+                warn!("[mux] build_ws failed ({e:#}), detecting new outbound IP...");
+                let new_ip = detect_outbound_ip(srv.addr);
+                if let Some(ip) = new_ip {
+                    if Some(ip) != srv.outbound_ip {
+                        info!("[mux] outbound IP changed: {:?} → {ip}", srv.outbound_ip);
+                        let mut new_srv = (*srv).clone();
+                        new_srv.outbound_ip = Some(ip);
+                        let new_srv = Arc::new(new_srv);
+                        *self.srv.write().await = new_srv.clone();
+                        build_ws(&new_srv).await?
+                    } else {
+                        return Err(e);
+                    }
+                } else {
+                    return Err(e);
+                }
+            }
+            Err(e) => return Err(e),
+        };
+
         let (ws_tx, ws_rx) = ws.split();
         let (frame_tx, mut frame_rx) = mpsc::channel::<Bytes>(1024);
 
-        // writer task（含心跳）
+        // writer task + 心跳
         let writer = tokio::spawn(async move {
             let mut ws_tx = ws_tx;
-            let mut heartbeat = tokio::time::interval(Duration::from_secs(20));
-            heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            let mut hb = tokio::time::interval(Duration::from_secs(20));
+            hb.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
                 tokio::select! {
-                    frame = frame_rx.recv() => {
-                        match frame {
-                            Some(f) => {
-                                if ws_tx.send(Message::Binary(f.into())).await.is_err() {
-                                    break;
-                                }
-                            }
-                            None => break,
-                        }
-                    }
-                    _ = heartbeat.tick() => {
-                        if ws_tx.send(Message::Ping(bytes::Bytes::new())).await.is_err() {
-                            break;
-                        }
+                    frame = frame_rx.recv() => match frame {
+                        Some(f) => { if ws_tx.send(Message::Binary(f.into())).await.is_err() { break; } }
+                        None    => break,
+                    },
+                    _ = hb.tick() => {
+                        if ws_tx.send(Message::Ping(bytes::Bytes::new())).await.is_err() { break; }
                     }
                 }
             }
@@ -339,14 +414,10 @@ impl Mux {
         });
 
         {
-            let mut inner = self.inner.write().await;
-            inner.frame_tx = Some(frame_tx);
+            self.inner.write().await.frame_tx = Some(frame_tx);
         }
 
-        // disconnected 信号
-        let (disc_tx, disc_rx) = tokio::sync::oneshot::channel::<()>();
-
-        // dispatcher task（只负责收帧，不做重连）
+        let (disc_tx, disc_rx) = oneshot::channel::<()>();
         let mux = self.clone();
         tokio::spawn(async move {
             mux.dispatch(ws_rx, writer).await;
@@ -406,8 +477,7 @@ impl Mux {
                         _ => warn!("[mux] unknown type {typ:#x} sid={id}"),
                     }
                 }
-                Some(Ok(Message::Ping(_))) => {}
-                Some(Ok(Message::Pong(_))) => {}
+                Some(Ok(Message::Ping(_))) | Some(Ok(Message::Pong(_))) => {}
                 Some(Ok(Message::Close(_))) => {
                     info!("[mux] server closed ws");
                     break;
@@ -420,7 +490,6 @@ impl Mux {
                 _ => {}
             }
         }
-
         writer.abort();
         self.inner.write().await.clear();
     }
@@ -511,13 +580,12 @@ async fn main() -> Result<()> {
 
     let mux = Arc::new(Mux::new(srv.clone()));
     let disc_rx = mux.connect().await?;
-
     info!(
         "socks5 on {bind}  →  {}://{}{}",
         srv.scheme, srv.host, srv.path
     );
 
-    // 重连循环
+    // 重连循环：断线后自动重连，WiFi 切换时自动探测新出站 IP
     {
         let mux = mux.clone();
         tokio::spawn(async move {
