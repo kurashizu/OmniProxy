@@ -84,6 +84,11 @@ pub struct Config {
 fn default_socks_port() -> u16 {
     1080
 }
+#[cfg(target_os = "macos")]
+fn default_tun_name() -> String {
+    "utun0".into()
+}
+#[cfg(not(target_os = "macos"))]
 fn default_tun_name() -> String {
     "tun0".into()
 }
