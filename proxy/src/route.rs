@@ -1,4 +1,4 @@
-use crate::{network::PhysicalRoute, Config};
+use crate::{config::Config, network::PhysicalRoute};
 use anyhow::Result;
 use std::net::IpAddr;
 use tracing::{debug, info, warn};
@@ -58,9 +58,9 @@ mod imp {
         ip(&["addr", "add", &format!("{tun_ip}/{prefix}"), "dev", tun]).await?;
 
         // Bypass route for server
-        if let Some(ref sip) = cfg.server_ip_hint_v4().await {
+        if let Some(sip) = cfg.server_ip_hint_v4().await {
             let gw = phys.gateway.to_string();
-            ip(&["route", "add", sip, "via", &gw, "dev", &phys.iface]).await?;
+            ip(&["route", "add", &sip, "via", &gw, "dev", &phys.iface]).await?;
         }
 
         // IPv6 TUN addr
@@ -100,8 +100,8 @@ mod imp {
     }
 
     pub async fn tun_down(cfg: &Config) {
-        if let Some(ref sip) = cfg.server_ip_hint_v4().await {
-            ip(&["route", "del", sip]).await.ok();
+        if let Some(sip) = cfg.server_ip_hint_v4().await {
+            ip(&["route", "del", &sip]).await.ok();
         }
         if let Some(server_ip6) = cfg.server_ip_hint_v6().await {
             ip(&["-6", "route", "del", &format!("{server_ip6}/128")])
@@ -162,8 +162,7 @@ mod imp {
         }
     }
 
-    // 针对 macOS 的网络接口与标准路由控制实现
-    pub async fn tun_up(cfg: &Config, _phys: &PhysicalRoute) -> Result<()> {
+    pub async fn tun_up(cfg: &Config, phys: &PhysicalRoute) -> Result<()> {
         let tun = &cfg.tun_name;
         let tun_ip = &cfg.tun_ip;
         let tun_ip6 = &cfg.tun_ip6;
@@ -191,11 +190,11 @@ mod imp {
 
         // Bypass route for server (IPv4 + IPv6)
         if let Some(ref sip) = cfg.server_ip_hint_v4().await {
-            let gw = _phys.gateway.to_string();
+            let gw = phys.gateway.to_string();
             route(&["-n", "add", "-host", sip, &gw]).await;
         }
         if let Some(ref sip6) = cfg.server_ip_hint_v6().await {
-            let gw6 = _phys.gateway.to_string();
+            let gw6 = phys.gateway.to_string();
             route(&["-n", "add", "-inet6", "-host", sip6, &gw6]).await;
         }
 

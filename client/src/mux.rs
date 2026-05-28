@@ -15,7 +15,7 @@ use crate::codec::{
 use crate::config::Config;
 use crate::ws::build_ws;
 
-pub struct MuxInner {
+pub(crate) struct MuxInner {
     streams: HashMap<u32, mpsc::Sender<bytes::Bytes>>,
     connect_notify: HashMap<u32, oneshot::Sender<Result<()>>>,
     udp_tx: Option<mpsc::Sender<(String, u16, bytes::Bytes)>>,
@@ -40,7 +40,7 @@ impl MuxInner {
     }
 }
 
-pub struct Mux {
+pub(crate) struct Mux {
     next_id: AtomicU32,
     inner: RwLock<MuxInner>,
     /// 当前配置（包含 server URL 和 outbound_ip）
@@ -48,7 +48,7 @@ pub struct Mux {
 }
 
 impl Mux {
-    pub fn new(cfg: Config) -> Self {
+    pub(crate) fn new(cfg: Config) -> Self {
         Mux {
             next_id: AtomicU32::new(1),
             inner: RwLock::new(MuxInner::new()),
@@ -56,7 +56,7 @@ impl Mux {
         }
     }
 
-    pub async fn connect_mux(cfg: &Config) -> Result<Arc<Self>> {
+    pub(crate) async fn connect_mux(cfg: &Config) -> Result<Arc<Self>> {
         let mux = Arc::new(Mux::new(cfg.clone()));
         let disc_rx = mux.connect().await?;
         spawn_reconnect_loop(mux.clone(), disc_rx);
@@ -85,7 +85,7 @@ impl Mux {
 
     /// 建立 WS 连接。如果有 outbound_ip 但 bind 失败（网络切换导致 IP 失效），
     /// 则自动探测新出站 IP 并重试一次。
-    pub async fn connect(self: &Arc<Self>) -> Result<oneshot::Receiver<()>> {
+    pub(crate) async fn connect(self: &Arc<Self>) -> Result<oneshot::Receiver<()>> {
         let ws = build_ws(&self.cfg).await?;
 
         let (ws_tx, ws_rx) = ws.split();
@@ -190,7 +190,7 @@ impl Mux {
         self.inner.write().await.clear();
     }
 
-    pub async fn tcp_connect(
+    pub(crate) async fn tcp_connect(
         &self,
         target: &str,
     ) -> Result<(
@@ -211,25 +211,25 @@ impl Mux {
         Ok((id, data_rx, conn_rx))
     }
 
-    pub async fn tcp_data(&self, id: u32, data: bytes::Bytes) -> Result<()> {
+    pub(crate) async fn tcp_data(&self, id: u32, data: bytes::Bytes) -> Result<()> {
         self.send_frame(encode_frame(id, TYPE_TCP_DATA, &data))
             .await
     }
 
-    pub async fn tcp_fin(&self, id: u32) {
+    pub(crate) async fn tcp_fin(&self, id: u32) {
         self.send_frame(encode_frame(id, TYPE_TCP_FIN, &[]))
             .await
             .ok();
         self.inner.write().await.streams.remove(&id);
     }
 
-    pub async fn register_udp(&self) -> mpsc::Receiver<(String, u16, bytes::Bytes)> {
+    pub(crate) async fn register_udp(&self) -> mpsc::Receiver<(String, u16, bytes::Bytes)> {
         let (tx, rx) = mpsc::channel(256);
         self.inner.write().await.udp_tx = Some(tx);
         rx
     }
 
-    pub async fn udp_send(&self, host: &str, port: u16, data: &[u8]) -> Result<()> {
+    pub(crate) async fn udp_send(&self, host: &str, port: u16, data: &[u8]) -> Result<()> {
         let payload = encode_udp_payload(host, port, data);
         self.send_frame(encode_frame(UDP_STREAM_ID, TYPE_UDP_DATA, &payload))
             .await

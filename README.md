@@ -6,7 +6,7 @@ A self-hosted transparent proxy suite that tunnels all system traffic through en
 
 - **WebSocket transport** — Tunnel traffic through Cloudflare Workers or any WebSocket endpoint
 - **Stream multiplexing** — Multiple TCP/UDP streams share a single WebSocket connection
-- **Auto-reconnect** — Client automatically reconnects on connection failure; outbound IP is re-detected on network change
+- **Connection handling** — Client retries reconnect a bounded number of times; outbound IP can be bound explicitly when needed
 - **TUN transparent proxy** — Route all system traffic through the proxy via tun2socks
 - **Cross-platform** — Linux, macOS, and Windows support
 
@@ -64,8 +64,11 @@ Each zip contains: `client`, `server`, `proxy`, `tun2socks`, `config.yml`, `READ
 addr: 127.0.0.1
 port: 1080
 token: "your-secret-token"
-server: "your-worker.your-subdomain.workers.dev"  # auto-prepends wss:// and /path
+server: "your-worker.your-subdomain.workers.dev/your-path"
 ```
+
+`server` should be a WebSocket URL. The client prepends `wss://` if the scheme is omitted.
+If you want the client to bind a source IP, pass `--outbound-ip`; the `proxy` binary can inject it automatically on platforms that need it.
 
 ### Server (`server/config.yml`)
 
@@ -110,7 +113,7 @@ phys_iface: ""
 Browser/App → SOCKS5 client (127.0.0.1:1080) → WebSocket → server → target
 ```
 
-**client**: SOCKS5 proxy server that multiplexes all streams over a persistent WebSocket connection to the server. Supports auto-reconnect and outbound IP binding.
+**client**: SOCKS5 proxy server that multiplexes all streams over a persistent WebSocket connection to the server. Supports outbound IP binding; reconnect is capped.
 
 **server**: WebSocket relay that demultiplexes streams and bridges to target TCP/UDP endpoints.
 

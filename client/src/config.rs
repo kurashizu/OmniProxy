@@ -68,7 +68,7 @@ impl Config {
         }
     }
 
-    pub fn load() -> Result<Self> {
+    pub(crate) fn load() -> Result<Self> {
         let cli = Cli::parse();
         Self::from_cli(cli)
     }
