@@ -1,11 +1,12 @@
 // Forwarder: netstack-smoltcp based TUN-to-SOCKS5 transparent proxy.
 
 pub mod tun_device;
+mod udp;
 
 use anyhow::{Context, Result};
 use bytes::BytesMut;
 use futures::{SinkExt, StreamExt};
-use netstack_smoltcp::{StackBuilder, TcpListener, Stack};
+use netstack_smoltcp::{StackBuilder, TcpListener, UdpSocket, Stack};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
@@ -18,18 +19,20 @@ pub use tun_device::{tun_down, tun_up};
 pub struct Forwarder {
     stack: Option<Stack>,
     tcp_listener: Option<TcpListener>,
+    udp_socket: Option<UdpSocket>,
     tun_framed: Option<tun_rs::async_framed::DeviceFramed<BytesCodec, std::sync::Arc<tun_rs::AsyncDevice>>>,
     socks_port: u16,
 }
 
 impl Forwarder {
     pub fn new(mut tun: TunDevice, socks_port: u16) -> Result<Self> {
-        let (stack, runner, _udp_socket, tcp_listener) = StackBuilder::default()
+        let (stack, runner, udp_socket, tcp_listener) = StackBuilder::default()
             .stack_buffer_size(512)
             .tcp_buffer_size(64 * 1024)
+            .udp_buffer_size(512)
             .mtu(1500)
             .enable_tcp(true)
-            .enable_udp(false)
+            .enable_udp(true)
             .enable_icmp(false)
             .build()
             .context("build netstack")?;
@@ -39,6 +42,7 @@ impl Forwarder {
         }
 
         let tcp_listener = tcp_listener.expect("tcp enabled");
+        let udp_socket = udp_socket.expect("udp enabled");
         let dev = tun
             .take_device()
             .ok_or_else(|| anyhow::anyhow!("AsyncDevice already taken"))?;
@@ -50,6 +54,7 @@ impl Forwarder {
         Ok(Self {
             stack: Some(stack),
             tcp_listener: Some(tcp_listener),
+            udp_socket: Some(udp_socket),
             tun_framed: Some(framed),
             socks_port,
         })
@@ -81,8 +86,19 @@ impl Forwarder {
                 match pkt {
                     Ok(p) => {
                         count += 1;
-                        if count <= 5 || count % 1000 == 0 {
-                            debug!("[forwarder] tun->stack: {} bytes (#{})", p.len(), count);
+                        // Log first few packets with protocol info
+                        if count <= 20 || count % 1000 == 0 {
+                            let proto = if p.len() >= 10 {
+                                match p[9] {
+                                    6 => "TCP",
+                                    17 => "UDP",
+                                    1 => "ICMP",
+                                    _ => "OTHER",
+                                }
+                            } else {
+                                "SHORT"
+                            };
+                            debug!("[forwarder] tun->stack: {} bytes (#{}) proto={}", p.len(), count, proto);
                         }
                         if stack_sink.send(p.to_vec()).await.is_err() {
                             warn!("[forwarder] stack sink closed");
@@ -129,12 +145,23 @@ impl Forwarder {
             }
         });
 
+        // Handle UDP
+        let udp_socket = self.udp_socket.take().expect("udp_socket already taken");
+        let (udp_read, udp_write) = udp_socket.split();
+        let socks_port = self.socks_port;
+        let udp_task = tokio::spawn(async move {
+            if let Err(e) = udp::run_udp_handler(udp_read, udp_write, socks_port).await {
+                warn!("[forwarder] udp handler: {e}");
+            }
+        });
+
         info!("[forwarder] running");
 
         tokio::select! {
             _ = tun_to_stack => warn!("[forwarder] tun->stack died"),
             _ = stack_to_tun => warn!("[forwarder] stack->tun died"),
             _ = tcp_task      => warn!("[forwarder] tcp handler died"),
+            _ = udp_task      => warn!("[forwarder] udp handler died"),
             _ = tun_writer    => warn!("[forwarder] tun writer died"),
         }
 
