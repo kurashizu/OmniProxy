@@ -12,7 +12,7 @@ socks_port: 1080
 
 # TUN interface name.
 # macOS requires "utun" prefix. utun100 avoids conflicts with system interfaces (0-9).
-tun_name: "utun100"
+tun_name: "utun99"
 
 # TUN virtual IP and CIDR prefix
 tun_ip: "198.18.0.1"

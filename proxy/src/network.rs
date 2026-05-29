@@ -27,10 +27,11 @@ fn detect_auto() -> Result<IpAddr> {
     let line = output.lines().next().unwrap_or_default();
 
     let mut src_ip = String::new();
-
-    for part in line.split_whitespace() {
-        if let Some(ip) = part.strip_prefix("src") {
-            src_ip = ip.to_string();
+    let parts: Vec<&str> = line.split_whitespace().collect();
+    for i in 0..parts.len() {
+        if parts[i] == "src" && i + 1 < parts.len() {
+            src_ip = parts[i + 1].to_string();
+            break;
         }
     }
 

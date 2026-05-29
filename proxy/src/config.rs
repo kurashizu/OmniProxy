@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 // CLI arguments.
 #[derive(Parser, Debug)]
-#[command(name = "proxy", about = "Transparent proxy stack manager")]
+#[command(name = "proxy", version, about = "Transparent proxy stack manager")]
 pub struct Cli {
     /// Path to YAML config file
     #[arg(long, short = 'c')]
