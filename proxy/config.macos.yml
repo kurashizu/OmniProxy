@@ -1,7 +1,6 @@
 # ── Core Executable Paths ─────────────────────────────────────────────────────
 # Relative paths targeting macOS binaries (no extension).
 client: "./client"
-tun2socks: "./tun2socks"
 
 # ── Remote Server Configuration ───────────────────────────────────────────────
 server: "your-server-domain.com"

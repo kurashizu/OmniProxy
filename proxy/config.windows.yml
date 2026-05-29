@@ -2,7 +2,6 @@
 # Relative paths targeting Windows executables.
 # Assumes these binaries reside in the same folder as the proxy manager.
 client: "./client.exe"
-tun2socks: "./tun2socks.exe"
 
 # ── Remote Server Configuration ───────────────────────────────────────────────
 # The address of your remote outbound proxy server.
@@ -14,12 +13,10 @@ server: "your-server-domain.com"
 token: "my_secure_super_secret_token_123"
 
 # ── Local Network & TUN Interface Settings ────────────────────────────────────
-# Local SOCKS5 port that the client listens on and tun2socks forwards traffic to.
+# Local SOCKS5 port that the client listens on.
 socks_port: 1080
 
 # The designated name of the TUN interface.
-# On Windows, our polling logic will automatically match the Wintun adapter
-# created by tun2socks even if the system names it differently, so keep this default.
 tun_name: "tun0"
 
 # Virtual IP, CIDR prefix, and gateway for the TUN interface ecosystem.

@@ -101,65 +101,6 @@ jobs:
                   codesign --force --sign - dist/proxy
               shell: bash
 
-            # ── Download tun2socks ──────────────────────────────────────────────────
-            - name: Download tun2socks (Linux x86_64)
-              if: matrix.target == 'x86_64-unknown-linux-musl'
-              continue-on-error: true
-              run: |
-                  curl -sL https://github.com/xjasonlyu/tun2socks/releases/download/v2.6.0/tun2socks-linux-amd64.zip -o tun2socks.zip
-                  unzip -o tun2socks.zip
-                  mv tun2socks-linux-amd64 tun2socks
-                  chmod +x tun2socks
-              shell: bash
-
-            - name: Download tun2socks (Linux ARM64)
-              if: matrix.target == 'aarch64-unknown-linux-musl'
-              continue-on-error: true
-              run: |
-                  curl -sL https://github.com/xjasonlyu/tun2socks/releases/download/v2.6.0/tun2socks-linux-arm64.zip -o tun2socks.zip
-                  unzip -o tun2socks.zip
-                  mv tun2socks-linux-arm64 tun2socks
-                  chmod +x tun2socks
-              shell: bash
-
-            - name: Download tun2socks (macOS x86_64)
-              if: matrix.target == 'x86_64-apple-darwin'
-              continue-on-error: true
-              run: |
-                  curl -sL https://github.com/xjasonlyu/tun2socks/releases/download/v2.6.0/tun2socks-darwin-amd64.zip -o tun2socks.zip
-                  unzip -o tun2socks.zip
-                  mv tun2socks-darwin-amd64 tun2socks
-                  chmod +x tun2socks
-              shell: bash
-
-            - name: Download tun2socks (macOS aarch64)
-              if: matrix.target == 'aarch64-apple-darwin'
-              continue-on-error: true
-              run: |
-                  curl -sL https://github.com/xjasonlyu/tun2socks/releases/download/v2.6.0/tun2socks-darwin-arm64.zip -o tun2socks.zip
-                  unzip -o tun2socks.zip
-                  mv tun2socks-darwin-arm64 tun2socks
-                  chmod +x tun2socks
-              shell: bash
-
-            - name: Download tun2socks (Windows x64)
-              if: matrix.target == 'x86_64-pc-windows-msvc'
-              continue-on-error: true
-              run: |
-                  curl.exe -sL https://github.com/xjasonlyu/tun2socks/releases/download/v2.6.0/tun2socks-windows-amd64-v3.zip -o tun2socks.zip
-                  Expand-Archive -Force tun2socks.zip -DestinationPath .
-                  mv tun2socks-windows-amd64-v3.exe tun2socks.exe
-              shell: powershell
-
-            - name: Download tun2socks (Windows ARM64)
-              if: matrix.target == 'aarch64-pc-windows-msvc'
-              continue-on-error: true
-              run: |
-                  curl.exe -sL https://github.com/xjasonlyu/tun2socks/releases/download/v2.6.0/tun2socks-windows-arm64.zip -o tun2socks.zip
-                  Expand-Archive -Force tun2socks.zip -DestinationPath .
-                  mv tun2socks-windows-arm64.exe tun2socks.exe
-              shell: powershell
-
             - name: Download wintun (Windows)
               if: startsWith(matrix.os, 'windows')
               continue-on-error: true
@@ -191,7 +132,6 @@ jobs:
               if: startsWith(matrix.os, 'ubuntu')
               run: |
                   cp README.md dist/ || true
-                  cp tun2socks dist/ || true
                   cp proxy/config.linux.yml dist/config.yml || true
                   zip -r ${{ matrix.zip }} dist/
               shell: bash
@@ -200,7 +140,6 @@ jobs:
               if: matrix.os == 'macos-latest'
               run: |
                   cp README.md dist/ || true
-                  cp tun2socks dist/ || true
                   cp proxy/config.macos.yml dist/config.yml || true
                   cp scripts/setup_macos.sh dist/
                   zip -r ${{ matrix.zip }} dist/
@@ -210,7 +149,6 @@ jobs:
               if: startsWith(matrix.os, 'windows')
               run: |
                   if (Test-Path README.md) { cp README.md dist/ }
-                  if (Test-Path tun2socks.exe) { cp tun2socks.exe dist/ }
                   cp proxy/config.windows.yml dist/config.yml
                   Compress-Archive -Path dist -DestinationPath ${{ matrix.zip }}
               shell: powershell

@@ -8,8 +8,7 @@
 #     1. Creates an isolated routing table for the proxy client user
 #        (prevents routing loops — the client itself bypasses the TUN)
 #     2. Starts the SOCKS5 proxy client
-#     3. Starts tun2socks to forward all traffic through the SOCKS5 client
-#     4. Configures the TUN interface with routes to intercept all traffic
+#     3. Configures the TUN interface with routes to intercept all traffic
 #   On exit (Ctrl+C or error), all routes and processes are cleaned up.
 #
 # USAGE:
@@ -17,7 +16,6 @@
 #
 # OPTIONS:
 #   -c, --client PATH       Path to the socks5 client binary  (default: ./client)
-#   -t, --tun2socks PATH    Path to the tun2socks binary       (default: ./tun2socks)
 #   -i, --iface NAME        TUN interface name                 (default: tun0)
 #   -p, --port PORT         SOCKS5 listen port                 (default: 1080)
 #   -u, --user USER         Isolated user for the client       (default: client_user)
@@ -26,11 +24,11 @@
 #   -h, --help              Show this help message and exit
 #
 # EXAMPLES:
-#   # Basic usage — client and tun2socks in current directory
+#   # Basic usage — client in current directory
 #   sudo ./proxy.sh -- --server example.com --token secret
 #
-#   # Custom binary paths
-#   sudo ./proxy.sh -c /usr/local/bin/client -t /usr/local/bin/tun2socks \
+#   # Custom binary path
+#   sudo ./proxy.sh -c /usr/local/bin/client \
 #        -- --server example.com --token secret
 #
 #   # Custom TUN interface name
@@ -47,7 +45,6 @@ set -euo pipefail
 
 # ── Defaults ──────────────────────────────────────────────────────────────────
 CLIENT="./client"
-TUN2SOCKS="./tun2socks"
 INTERFACE="tun0"
 SOCKS_PORT="1080"
 PROXY_USER="client_user"
@@ -79,7 +76,6 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         -h|--help)       usage ;;
         -c|--client)     CLIENT="$2";      shift 2 ;;
-        -t|--tun2socks)  TUN2SOCKS="$2";   shift 2 ;;
         -i|--iface)      INTERFACE="$2";   shift 2 ;;
         -p|--port)       SOCKS_PORT="$2";  shift 2 ;;
         -u|--user)       PROXY_USER="$2";  shift 2 ;;
@@ -93,8 +89,7 @@ done
 # ── Sanity checks ─────────────────────────────────────────────────────────────
 [[ $EUID -eq 0 ]] || die "This script must be run with sudo."
 
-[[ -x "$CLIENT" ]]    || die "Client binary not found or not executable: $CLIENT"
-[[ -x "$TUN2SOCKS" ]] || die "tun2socks binary not found or not executable: $TUN2SOCKS"
+[[ -x "$CLIENT" ]] || die "Client binary not found or not executable: $CLIENT"
 
 command -v ip   &>/dev/null || die "'ip' command not found. Install iproute2."
 command -v ss   &>/dev/null || die "'ss' command not found. Install iproute2."
@@ -102,7 +97,6 @@ command -v ss   &>/dev/null || die "'ss' command not found. Install iproute2."
 
 # ── State for cleanup ─────────────────────────────────────────────────────────
 CLIENT_PID=""
-TUN2SOCKS_PID=""
 TUN_CONFIGURED=false
 RULES_CONFIGURED=false
 
@@ -111,8 +105,6 @@ cleanup() {
     echo ""
     log "Shutting down..."
 
-    [[ -n "$TUN2SOCKS_PID" ]] && kill "$TUN2SOCKS_PID" 2>/dev/null && \
-        log "Stopped tun2socks (pid $TUN2SOCKS_PID)"
     [[ -n "$CLIENT_PID" ]] && kill "$CLIENT_PID" 2>/dev/null && \
         log "Stopped client (pid $CLIENT_PID)"
 
@@ -225,24 +217,19 @@ done
 [[ "$WAIT_OK" == true ]] || die "SOCKS5 port $SOCKS_PORT did not open within 10 seconds."
 ok "SOCKS5 listening on :$SOCKS_PORT"
 
-# ── Start tun2socks ───────────────────────────────────────────────────────────
-log "Starting tun2socks: $TUN2SOCKS"
-"$TUN2SOCKS" -device "$INTERFACE" -proxy "socks5://127.0.0.1:${SOCKS_PORT}" -loglevel error &
-TUN2SOCKS_PID=$!
-
-# Wait for TUN device to appear (up to 5 seconds)
-log "Waiting for $INTERFACE device..."
+# ── Wait for TUN device to appear ────────────────────────────────────────────
+# TUN creation is now handled by the proxy binary's built-in forwarder.
+# Wait for the interface to appear (up to 10 seconds).
+log "Waiting for $INTERFACE device (created by proxy forwarder)..."
 WAIT_OK=false
-for i in $(seq 1 25); do
+for i in $(seq 1 50); do
     if ip link show "$INTERFACE" &>/dev/null; then
         WAIT_OK=true
         break
     fi
-    kill -0 "$TUN2SOCKS_PID" 2>/dev/null \
-        || die "tun2socks exited unexpectedly before creating $INTERFACE."
     sleep 0.2
 done
-[[ "$WAIT_OK" == true ]] || die "$INTERFACE did not appear within 5 seconds."
+[[ "$WAIT_OK" == true ]] || die "$INTERFACE did not appear within 10 seconds."
 
 # ── Configure TUN interface ───────────────────────────────────────────────────
 log "Configuring $INTERFACE..."
@@ -268,7 +255,6 @@ echo -e "${BOLD}${GREEN}All traffic is now routed through the proxy.${RESET}"
 echo -e "  IPv4 default: $(ip route show default | grep "$INTERFACE" | head -1)"
 echo -e "  IPv6 default: $(ip -6 route show default | grep "$INTERFACE" | head -1)"
 echo -e "  Client pid:   $CLIENT_PID"
-echo -e "  tun2socks pid: $TUN2SOCKS_PID"
 echo -e "  Press ${BOLD}Ctrl+C${RESET} to stop and clean up."
 echo ""
 

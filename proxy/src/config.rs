@@ -20,15 +20,6 @@ pub struct Cli {
     #[arg(long, short = 'C', default_value = "./client")]
     pub client: Option<PathBuf>,
 
-    /// Path to tun2socks binary
-    #[cfg(target_os = "windows")]
-    #[arg(long, default_value = r".\tun2socks.exe")]
-    pub tun2socks: Option<PathBuf>,
-
-    #[cfg(not(target_os = "windows"))]
-    #[arg(long, default_value = "./tun2socks")]
-    pub tun2socks: Option<PathBuf>,
-
     /// WebSocket server URL (e.g., example.com)
     #[arg(long, short = 's')]
     pub server: Option<String>,
@@ -78,7 +69,6 @@ pub struct Cli {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub client: PathBuf,
-    pub tun2socks: PathBuf,
     pub server: String,
     pub token: String,
     #[serde(default = "default_socks_port")]
@@ -160,13 +150,6 @@ impl Config {
                 let ext = "client";
                 cfg.client = self_dir.join(ext);
             }
-            if cfg.tun2socks.as_os_str().is_empty() {
-                #[cfg(windows)]
-                let ext = "tun2socks.exe";
-                #[cfg(not(windows))]
-                let ext = "tun2socks";
-                cfg.tun2socks = self_dir.join(ext);
-            }
 
             return Ok(cfg);
         }
@@ -185,11 +168,9 @@ impl Config {
         let tun_gw6 = cli.tun_gw6.clone().unwrap_or_else(default_tun_gw6);
 
         let client = cli.client.clone().unwrap();
-        let tun2socks = cli.tun2socks.clone().unwrap();
 
         Ok(Config {
             client,
-            tun2socks,
             server,
             token: cli.token.clone().unwrap_or_default(),
             socks_port: cli.socks_port,

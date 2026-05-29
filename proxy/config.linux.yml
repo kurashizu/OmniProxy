@@ -2,7 +2,6 @@
 # Relative paths targeting Linux binaries (no extension).
 # Assumes these binaries reside in the same folder as the proxy manager.
 client: "./client"
-tun2socks: "./tun2socks"
 
 # ── Remote Server Configuration ───────────────────────────────────────────────
 server: "your-server-domain.com"

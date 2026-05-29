@@ -7,7 +7,7 @@ A self-hosted transparent proxy suite that tunnels all system traffic through en
 - **WebSocket transport** — Tunnel traffic through Cloudflare Workers or any WebSocket endpoint
 - **Stream multiplexing** — Multiple TCP/UDP streams share a single WebSocket connection
 - **Connection handling** — Client retries reconnect a bounded number of times; outbound IP can be bound explicitly when needed
-- **TUN transparent proxy** — Route all system traffic through the proxy via tun2socks
+- **TUN transparent proxy** — Route all system traffic through the proxy via built-in TUN forwarder
 - **Cross-platform** — Linux, macOS, and Windows support
 
 ## Quick Start
@@ -50,9 +50,9 @@ Download the latest release from GitHub:
 - **Windows**: `omni-proxy-windows-x86_64-msvc.zip`
 - **macOS**: `omni-proxy-macos-x86_64.zip` or `omni-proxy-macos-aarch64.zip`
 
-Each zip contains: `client`, `server`, `proxy`, `tun2socks`, `config.yml`, `README.md`, and `setup_macos.sh` (macOS only).
+Each zip contains: `client`, `server`, `proxy`, `config.yml`, `README.md`, and `setup_macos.sh` (macOS only).
 
-**One-time setup:** Extract the zip to any directory. Edit `config.yml` once — all binaries (`client`, `tun2socks`) are resolved relative to the `proxy` binary location, so no path changes needed.
+**One-time setup:** Extract the zip to any directory. Edit `config.yml` once — the `client` binary is resolved relative to the `proxy` binary location, so `./client` works out of the box.
 
 **macOS:** Run `./setup_macos.sh` once to bypass Gatekeeper security restrictions (removes quarantine attributes and ad-hoc signs binaries).
 
@@ -80,18 +80,17 @@ token: "your-secret-token"  # clients must send this token
 
 ### Proxy (`config.yml`)
 
-For TUN transparent proxy mode. Place `config.yml` in the same directory as the `proxy` binary — paths are resolved relative to the binary location, so `./client` and `./tun2socks` work out of the box.
+For TUN transparent proxy mode. Place `config.yml` in the same directory as the `proxy` binary — the `client` path is resolved relative to the binary location, so `./client` works out of the box.
 
 ```yaml
 # Core executables (relative to proxy binary location)
 client: "./client"
-tun2socks: "./tun2socks"
 
 # Server connection
 server: "your-worker.your-subdomain.workers.dev"
 token: "your-secret-token"
 
-# Local SOCKS5 port (client listens, tun2socks forwards to)
+# Local SOCKS5 port (client listens on)
 socks_port: 1080
 
 # TUN interface settings
@@ -117,7 +116,7 @@ Browser/App → SOCKS5 client (127.0.0.1:1080) → WebSocket → server → targ
 
 **server**: WebSocket relay that demultiplexes streams and bridges to target TCP/UDP endpoints.
 
-**proxy**: Transparent proxy manager. Sets up TUN interface, routing rules, and launches client + tun2socks.
+**proxy**: Transparent proxy manager. Sets up TUN interface, routing rules, and launches client with a built-in TUN forwarder.
 
 ## Protocol
 
@@ -135,7 +134,7 @@ UDP payload: `[2B host_len][host bytes][2B port][data]`
 
 ## TUN Mode
 
-Route all system traffic through the proxy. The proxy binary sets up TUN, configures routes, and spawns client + tun2socks.
+Route all system traffic through the proxy. The proxy binary sets up TUN, configures routes, and launches client with a built-in TUN forwarder.
 
 ### Linux/macOS
 
@@ -157,7 +156,7 @@ Run with administrator privileges:
 
 1. Proxy creates a TUN interface with fake-IP ranges `198.18.0.0/16` (IPv4) and `fd00::/64` (IPv6)
 2. Routes traffic destined to fake-IPs through the TUN interface
-3. tun2socks reads from TUN and sends to the local SOCKS5 client
+3. Built-in forwarder reads from TUN and sends to the local SOCKS5 client
 4. Client multiplexes traffic over WebSocket to the server
 
 **Important:** The fake-IP ranges `198.18.0.0/16` and `fd00::/64` must not overlap with your real network.
@@ -172,7 +171,7 @@ Run with administrator privileges:
 
 ## Credits
 
-Powered by [tun2socks](https://github.com/xjasonlyu/tun2socks) and [Wintun](https://www.wintun.net/).
+Powered by [Wintun](https://www.wintun.net/).
 
 ## License
 

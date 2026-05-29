@@ -6,7 +6,7 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-BINARIES=("client" "server" "proxy" "tun2socks")
+BINARIES=("client" "server" "proxy")
 
 echo "=== macOS Security Setup for OmniProxy ==="
 echo ""

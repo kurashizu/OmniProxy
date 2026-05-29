@@ -9,26 +9,24 @@
       1. Detects the physical network interface and its default gateway.
       2. Resolves the proxy server domain and pins its current IPs to the physical NIC.
       3. Starts the SOCKS5 client.
-      4. Starts tun2socks on a Wintun-based TUN interface.
-      5. Configures the TUN interface and routes all system traffic through it.
-      6. Refreshes domain-based bypass routes on a timer to follow DNS changes.
+      4. Configures the TUN interface and routes all system traffic through it.
+      5. Refreshes domain-based bypass routes on a timer to follow DNS changes.
 
     The key idea is to keep the proxy server domain/IPs on the physical NIC,
     so the client does not loop back into the TUN path.
+
+    The TUN interface is created by the proxy binary's built-in forwarder.
 
 .USAGE
     PowerShell (run as Administrator):
       .\proxy.ps1 -ServerHost proxy.example.com -ClientArgs @('--server','proxy.example.com','--token','secret')
 
     Custom binaries:
-      .\proxy.ps1 -ClientPath .\client.exe -Tun2SocksPath .\tun2socks.exe `
+      .\proxy.ps1 -ClientPath .\client.exe `
                   -ServerHost proxy.example.com `
                   -ClientArgs @('--server','proxy.example.com','--token','secret')
 
 .NOTES
-    - This script assumes your tun2socks build accepts flags similar to:
-        -device <interfaceName> -proxy socks5://127.0.0.1:<port>
-      If your build uses different flags, adjust the Tun2SocksArgs section.
     - Domain-based bypass is implemented as host routes for the IPs currently
       returned by DNS. If the domain uses rapidly changing CDN IPs, reduce the
       refresh interval.
@@ -36,7 +34,6 @@
 
 param(
     [string]$ClientPath = (Join-Path $PSScriptRoot 'client.exe'),
-    [string]$Tun2SocksPath = (Join-Path $PSScriptRoot 'tun2socks.exe'),
     [string]$InterfaceName = 'tun0',
     [string]$SocksHost = '127.0.0.1',
     [int]$SocksPort = 1080,
@@ -79,13 +76,11 @@ if (-not (Test-Administrator)) {
 
 # ── Runtime state ─────────────────────────────────────────────────────────────
 $script:ClientProcess    = $null
-$script:Tun2SocksProcess = $null
 $script:PhysicalIfIndex  = $null
 $script:PhysicalGateway4 = $null
 $script:PhysicalIfAlias  = $null
 $script:PhysicalGateway6 = $null
 $script:PhysicalIfIndex6 = $null
-# FIX 1: 原文把两个赋值写在同一行用了字面 \n，分成两行
 $script:BypassIPv4       = @()
 $script:BypassIPv6       = @()
 $script:TunConfigured    = $false
@@ -300,18 +295,13 @@ function Wait-ForTcpPort {
 function Wait-ForInterface {
     param(
         [Parameter(Mandatory=$true)][string]$Alias,
-        [int]$TimeoutSec = 5
+        [int]$TimeoutSec = 10
     )
 
     $deadline = (Get-Date).AddSeconds($TimeoutSec)
     while ((Get-Date) -lt $deadline) {
         $adapter = Get-NetAdapter -Name $Alias -ErrorAction SilentlyContinue
         if ($adapter) { return $adapter }
-
-        if ($script:Tun2SocksProcess -and $script:Tun2SocksProcess.HasExited) {
-            Fail "tun2socks exited before the TUN interface appeared."
-        }
-
         Start-Sleep -Milliseconds 200
     }
 
@@ -328,7 +318,6 @@ function Configure-TunnelInterface {
 
     try { Set-NetIPInterface -InterfaceIndex $script:TunnelIfIndex -Dhcp Disabled -ErrorAction SilentlyContinue | Out-Null } catch {}
 
-    # 清理已有 IP
     try {
         Get-NetIPAddress -InterfaceIndex $script:TunnelIfIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue |
             Where-Object { $_.IPAddress -eq $TunnelIPv4Address } |
@@ -341,7 +330,6 @@ function Configure-TunnelInterface {
             ForEach-Object { Remove-NetIPAddress -InputObject $_ -Confirm:$false -ErrorAction SilentlyContinue | Out-Null }
     } catch {}
 
-    # 设置 IP
     try {
         New-NetIPAddress -InterfaceIndex $script:TunnelIfIndex `
             -IPAddress $TunnelIPv4Address -PrefixLength $TunnelIPv4PrefixLength `
@@ -354,7 +342,6 @@ function Configure-TunnelInterface {
             -AddressFamily IPv6 -ErrorAction SilentlyContinue | Out-Null
     } catch { Write-Warn "Failed to set IPv6 address on $Alias" }
 
-    # 清理再添加默认路由
     Remove-NetRoute -DestinationPrefix '0.0.0.0/0' -InterfaceIndex $script:TunnelIfIndex -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
     Remove-NetRoute -DestinationPrefix '::/0'       -InterfaceIndex $script:TunnelIfIndex -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
 
@@ -386,10 +373,6 @@ function Cleanup {
         try { Remove-NetRoute -DestinationPrefix '::/0'       -InterfaceIndex $script:TunnelIfIndex -Confirm:$false -ErrorAction SilentlyContinue | Out-Null } catch {}
     }
 
-    if ($script:Tun2SocksProcess -and -not $script:Tun2SocksProcess.HasExited) {
-        try { Stop-Process -Id $script:Tun2SocksProcess.Id -Force -ErrorAction SilentlyContinue; Write-Log "Stopped tun2socks (pid $($script:Tun2SocksProcess.Id))" } catch {}
-    }
-
     if ($script:ClientProcess -and -not $script:ClientProcess.HasExited) {
         try { Stop-Process -Id $script:ClientProcess.Id -Force -ErrorAction SilentlyContinue; Write-Log "Stopped client (pid $($script:ClientProcess.Id))" } catch {}
     }
@@ -400,8 +383,7 @@ function Cleanup {
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 try {
-    if (-not (Test-Path $ClientPath))    { Fail "Client binary not found: $ClientPath" }
-    if (-not (Test-Path $Tun2SocksPath)) { Fail "tun2socks binary not found: $Tun2SocksPath" }
+    if (-not (Test-Path $ClientPath)) { Fail "Client binary not found: $ClientPath" }
 
     $physical4 = Get-PhysicalGatewayInfo -AddressFamily IPv4
     if (-not $physical4) { Fail 'Could not detect an IPv4 physical default route.' }
@@ -435,22 +417,15 @@ try {
     Start-Sleep -Milliseconds 300
     if ($script:ClientProcess.HasExited) { Fail 'Client exited immediately. Check arguments.' }
 
-    # FIX 2: $SocksHost:$SocksPort 里冒号被解析为变量修饰符，用 ${SocksHost} 包裹
     Write-Log "Waiting for SOCKS5 on ${SocksHost}:${SocksPort}..."
     if (-not (Wait-ForTcpPort -Port $SocksPort -TimeoutSec 10)) {
         Fail "SOCKS5 port $SocksPort did not open within 10 seconds."
     }
     Write-Ok "SOCKS5 listening on port $SocksPort."
 
-    $tun2socksArgs = @('-device', $InterfaceName, '-proxy', "socks5://${SocksHost}:${SocksPort}", '-loglevel', 'error')
-    $tunWorkDir    = Split-Path -Parent (Resolve-Path $Tun2SocksPath)
-    Write-Log "Starting tun2socks: $Tun2SocksPath $($tun2socksArgs -join ' ')"
-    $script:Tun2SocksProcess = Start-Process -FilePath $Tun2SocksPath -ArgumentList $tun2socksArgs `
-        -WorkingDirectory $tunWorkDir -PassThru -WindowStyle Hidden
-
-    Write-Log "Waiting for TUN interface '$InterfaceName'..."
-    $adapter = Wait-ForInterface -Alias $InterfaceName -TimeoutSec 5
-    if (-not $adapter) { Fail "TUN interface '$InterfaceName' did not appear within 5 seconds." }
+    Write-Log "Waiting for TUN interface '$InterfaceName' (created by proxy forwarder)..."
+    $adapter = Wait-ForInterface -Alias $InterfaceName -TimeoutSec 10
+    if (-not $adapter) { Fail "TUN interface '$InterfaceName' did not appear within 10 seconds." }
 
     Configure-TunnelInterface -Alias $InterfaceName
 
@@ -465,16 +440,14 @@ try {
     Write-Host "  SOCKS5        : ${SocksHost}:${SocksPort}"
     Write-Host "  TUN interface : $InterfaceName"
     Write-Host "  Client PID    : $($script:ClientProcess.Id)"
-    Write-Host "  tun2socks PID : $($script:Tun2SocksProcess.Id)"
     Write-Host "  Refresh every : $RefreshIntervalSec seconds"
     Write-Host ''
     Write-Host 'Press Ctrl+C to stop and clean up.' -ForegroundColor White
     Write-Host ''
 
-    # 主循环：监控进程 + 定期刷新 bypass 路由
+    # Main loop: monitor client + periodically refresh bypass routes
     while ($true) {
-        if ($script:ClientProcess.HasExited)    { Fail 'Client process exited.' }
-        if ($script:Tun2SocksProcess.HasExited) { Fail 'tun2socks exited.' }
+        if ($script:ClientProcess.HasExited) { Fail 'Client process exited.' }
 
         Sync-BypassRoutesV4 -HostName $ServerHost -IfIndex $script:PhysicalIfIndex -NextHop $script:PhysicalGateway4
         if ($physical6 -and $script:PhysicalIfIndex6 -and $script:PhysicalGateway6) {
