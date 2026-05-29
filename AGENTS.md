@@ -39,3 +39,7 @@
 ## Testing
 - Verify changes with `cargo check`.
 - Run manual tests: `curl -x socks5h://127.0.0.1:1080 <url>` for TCP, `dig @8.8.8.8 example.com` for UDP.
+
+## Release
+- Change version in `Cargo.toml` and commit.
+- Push a tag (starts with `v`), e.g. `v1.2.3-rc.1`, then github actions will build and publish the release.

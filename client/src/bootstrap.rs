@@ -9,6 +9,10 @@ pub fn init() {
         .install_default()
         .expect("failed to install rustls crypto provider");
 
+    #[cfg(feature = "console")]
+    console_subscriber::init();
+
+    #[cfg(not(feature = "console"))]
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
