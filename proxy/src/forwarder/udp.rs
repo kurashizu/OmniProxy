@@ -1,5 +1,7 @@
 use anyhow::{Context, Result};
 use futures::{SinkExt, StreamExt};
+#[cfg(unix)]
+use libc;
 use netstack_smoltcp::udp::{ReadHalf, WriteHalf, UdpMsg};
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -36,7 +38,7 @@ pub(crate) async fn run_udp_handler(
     let socks_addr = format!("127.0.0.1:{socks_port}");
 
     let mut sessions: HashMap<SessionKey, UdpSession> = HashMap::new();
-    let (inbound_tx, mut inbound_rx) = mpsc::channel::<(SessionKey, Vec<u8>)>(256);
+    let (inbound_tx, mut inbound_rx) = mpsc::channel::<(SessionKey, Vec<u8>)>(2048);
 
     let mut reap_interval = tokio::time::interval(REAP_INTERVAL);
 
@@ -151,8 +153,30 @@ async fn create_session(
         other => anyhow::bail!("unexpected ATYP in UDP ASSOCIATE reply: {other:#x}"),
     };
 
-    // 2. 绑定独立的 relay socket
+    // 2. 绑定独立的 relay socket，设置较大的缓冲区
     let relay_socket = Arc::new(UdpSocket::bind("0.0.0.0:0").await?);
+    // 设置 OS 级别的 UDP 缓冲区 (2MB)
+    #[cfg(unix)]
+    {
+        use std::os::unix::io::AsRawFd;
+        let fd = relay_socket.as_raw_fd();
+        unsafe {
+            libc::setsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                libc::SO_RCVBUF,
+                &(2 * 1024 * 1024 as libc::c_int) as *const _ as *const libc::c_void,
+                std::mem::size_of::<libc::c_int>() as libc::socklen_t,
+            );
+            libc::setsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                libc::SO_SNDBUF,
+                &(2 * 1024 * 1024 as libc::c_int) as *const _ as *const libc::c_void,
+                std::mem::size_of::<libc::c_int>() as libc::socklen_t,
+            );
+        }
+    }
     info!("[udp] session {key:?} created, relay={relay_addr}");
 
     // 3. 发送第一个包

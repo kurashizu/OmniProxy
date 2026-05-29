@@ -8,7 +8,7 @@ use std::net::IpAddr;
 use std::sync::Arc;
 use tokio::net::TcpStream;
 use tokio::process::{Child, Command};
-use tokio::time::{timeout, Duration};
+use tokio::time::Duration;
 use tracing::{debug, info, warn};
 
 pub fn spawn(bin: &std::path::Path, args: &[String], label: &str) -> Result<Child> {
@@ -27,7 +27,7 @@ pub async fn kill_quiet(child: &mut Child) {
             unsafe {
                 libc::kill(pid as i32, libc::SIGTERM);
             }
-            let _ = timeout(Duration::from_secs(2), child.wait()).await;
+            let _ = tokio::time::timeout(Duration::from_secs(2), child.wait()).await;
         }
     }
     if let Err(e) = child.kill().await {

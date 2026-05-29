@@ -27,9 +27,9 @@ pub struct Forwarder {
 impl Forwarder {
     pub fn new(mut tun: TunDevice, socks_port: u16) -> Result<Self> {
         let (stack, runner, udp_socket, tcp_listener) = StackBuilder::default()
-            .stack_buffer_size(512)
-            .tcp_buffer_size(64 * 1024)
-            .udp_buffer_size(512)
+            .stack_buffer_size(4096)
+            .tcp_buffer_size(512 * 1024)
+            .udp_buffer_size(4096)
             .mtu(1500)
             .enable_tcp(true)
             .enable_udp(true)
@@ -67,7 +67,7 @@ impl Forwarder {
         let (mut tun_stream, mut tun_sink) = tun_framed.split();
 
         // Channel for writing packets back to TUN
-        let (tun_write_tx, mut tun_write_rx) = mpsc::channel::<BytesMut>(256);
+        let (tun_write_tx, mut tun_write_rx) = mpsc::channel::<BytesMut>(2048);
 
         // TUN writer task
         let tun_writer = tokio::spawn(async move {
@@ -206,8 +206,14 @@ async fn handle_tcp_via_socks5(
 
     info!("[session] SOCKS5 CONNECT to {} ok", dst);
 
-    let (mut net_r, mut net_w) = tokio::io::split(netstream);
-    let (mut socks_r, mut socks_w) = socks.into_split();
+    let (net_r, net_w) = tokio::io::split(netstream);
+    let (socks_r, socks_w) = socks.into_split();
+
+    // Wrap in buffered readers/writers with 256KB buffers
+    let mut net_r = tokio::io::BufReader::with_capacity(256 * 1024, net_r);
+    let mut net_w = tokio::io::BufWriter::with_capacity(256 * 1024, net_w);
+    let mut socks_r = tokio::io::BufReader::with_capacity(256 * 1024, socks_r);
+    let mut socks_w = tokio::io::BufWriter::with_capacity(256 * 1024, socks_w);
 
     tokio::select! {
         r = tokio::io::copy(&mut socks_r, &mut net_w) => { r.ok(); }
