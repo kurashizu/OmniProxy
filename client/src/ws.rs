@@ -269,7 +269,7 @@ fn iface_from_ip(target: IpAddr) -> Result<u32> {
             let mut uni = a.FirstUnicastAddress;
             while !uni.is_null() {
                 let sa = (*uni).Address.lpSockaddr;
-                if !sa.is_null() && (*sa).sa_family == AF_INET.0 as u16 {
+                if !sa.is_null() && (*sa).sa_family == windows::Win32::Networking::WinSock::ADDRESS_FAMILY(AF_INET.0 as u16) {
                     if let IpAddr::V4(v4) = target {
                         let sin = &*(sa as *const windows::Win32::Networking::WinSock::SOCKADDR_IN);
                         let ip = std::net::Ipv4Addr::from(u32::from_be(sin.sin_addr.S_un.S_addr));
