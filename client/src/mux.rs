@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot, RwLock};
 use tokio_tungstenite::tungstenite::Message;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::codec::{
     decode_frame, decode_udp_payload, encode_frame, encode_udp_payload, TYPE_TCP_CONNECT,
@@ -43,7 +43,7 @@ impl MuxInner {
 pub(crate) struct Mux {
     next_id: AtomicU32,
     inner: RwLock<MuxInner>,
-    /// 当前配置（包含 server URL 和 outbound_ip）
+    /// Current config (includes server URL and outbound_ip)
     cfg: Config,
 }
 
@@ -83,10 +83,12 @@ impl Mux {
             .map_err(|_| anyhow::anyhow!("ws writer closed"))
     }
 
-    /// 建立 WS 连接。如果有 outbound_ip 但 bind 失败（网络切换导致 IP 失效），
-    /// 则自动探测新出站 IP 并重试一次。
+    /// Establish WS connection. If outbound_ip bind fails (e.g. network change
+    /// invalidated the IP), auto-detect the new outbound IP and retry once.
     pub(crate) async fn connect(self: &Arc<Self>) -> Result<oneshot::Receiver<()>> {
+        debug!("establishing ws connection");
         let ws = build_ws(&self.cfg).await?;
+        debug!("ws connected");
 
         let (ws_tx, ws_rx) = ws.split();
         let (frame_tx, mut frame_rx) = mpsc::channel::<bytes::Bytes>(1024);
@@ -98,7 +100,7 @@ impl Mux {
             loop {
                 tokio::select! {
                     frame = frame_rx.recv() => match frame {
-                        Some(f) => { if ws_tx.send(Message::Binary(f.into())).await.is_err() { break; } }
+                        Some(f) => { if ws_tx.send(Message::Binary(f)).await.is_err() { break; } }
                         None    => break,
                     },
                     _ = hb.tick() => {
@@ -137,7 +139,7 @@ impl Mux {
                     let (id, typ, payload) = match decode_frame(&data) {
                         Ok(v) => v,
                         Err(e) => {
-                            warn!("[mux] decode: {e}");
+                            warn!(error = %e, "decode error");
                             continue;
                         }
                     };
@@ -170,16 +172,16 @@ impl Mux {
                                 }
                             }
                         }
-                        _ => warn!("[mux] unknown type {typ:#x} sid={id}"),
+                        _ => warn!(typ = format!("{typ:#x}"), id, "unknown frame type"),
                     }
                 }
                 Some(Ok(Message::Ping(_))) | Some(Ok(Message::Pong(_))) => {}
                 Some(Ok(Message::Close(_))) => {
-                    info!("[mux] server closed ws");
+                    info!("server closed ws");
                     break;
                 }
                 Some(Err(e)) => {
-                    warn!("[mux] ws error: {e}");
+                    warn!(error = %e, "ws error");
                     break;
                 }
                 None => break,
@@ -199,6 +201,7 @@ impl Mux {
         oneshot::Receiver<Result<()>>,
     )> {
         let id = self.alloc_id();
+        debug!(id, target, "tcp connect");
         let (data_tx, data_rx) = mpsc::channel::<bytes::Bytes>(64);
         let (conn_tx, conn_rx) = oneshot::channel::<Result<()>>();
         {
@@ -217,6 +220,7 @@ impl Mux {
     }
 
     pub(crate) async fn tcp_fin(&self, id: u32) {
+        debug!(id, "tcp fin");
         self.send_frame(encode_frame(id, TYPE_TCP_FIN, &[]))
             .await
             .ok();
@@ -230,6 +234,7 @@ impl Mux {
     }
 
     pub(crate) async fn udp_send(&self, host: &str, port: u16, data: &[u8]) -> Result<()> {
+        debug!(host, port, "udp send");
         let payload = encode_udp_payload(host, port, data);
         self.send_frame(encode_frame(UDP_STREAM_ID, TYPE_UDP_DATA, &payload))
             .await
@@ -242,21 +247,21 @@ fn spawn_reconnect_loop(mux: Arc<Mux>, mut disc_rx: oneshot::Receiver<()>) {
         loop {
             let _ = disc_rx.await;
             if retry >= 5 {
-                warn!("[mux] reconnect limit reached, stop retrying");
+            warn!("reconnect limit reached, stop retrying");
                 break;
             }
             retry += 1;
-            info!("[mux] disconnected, reconnecting in 3s...");
+            info!("disconnected, reconnecting in 3s...");
             tokio::time::sleep(Duration::from_secs(3)).await;
             loop {
                 match mux.connect().await {
                     Ok(new_disc) => {
-                        info!("[mux] reconnected");
+                        info!("reconnected");
                         disc_rx = new_disc;
                         break;
                     }
                     Err(e) => {
-                        warn!("[mux] reconnect failed: {e:#}, retry in 5s");
+                        warn!(error = %e, "reconnect failed, retry in 5s");
                         tokio::time::sleep(Duration::from_secs(5)).await;
                     }
                 }

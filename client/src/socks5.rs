@@ -39,7 +39,7 @@ async fn handle_tcp(
     mux: Arc<Mux>,
 ) -> Result<()> {
     let target = target_to_string(&target_addr);
-    debug!("[TCP→] {target}");
+    debug!(target, "socks5 tcp connect");
 
     let (stream_id, mut data_rx, conn_rx) = match mux.tcp_connect(&target).await {
         Ok(v) => v,
@@ -100,7 +100,7 @@ async fn handle_udp(
     proto: fast_socks5::server::Socks5ServerProtocol<TcpStream, fast_socks5::server::states::CommandRead>,
     mux: Arc<Mux>,
 ) -> Result<()> {
-    debug!("[UDP] associate");
+    debug!("socks5 udp associate");
 
     let udp = Arc::new(UdpSocket::bind("127.0.0.1:0").await?);
     let local_addr = udp.local_addr()?;
@@ -129,7 +129,7 @@ async fn handle_udp(
             let (host, port, data_offset) = match parse_socks5_udp_header(&buf[..n]) {
                 Ok(v) => v,
                 Err(e) => {
-                    warn!("[UDP] bad header: {e}");
+                    warn!(error = %e, "udp bad header");
                     continue;
                 }
             };
@@ -161,7 +161,7 @@ async fn handle_udp(
     tokio::select! {
         r = local_to_mux => { r.ok(); }
         r = mux_to_local => { r.ok(); }
-        _ = tcp_watch    => { debug!("[UDP] tcp control closed"); }
+        _ = tcp_watch    => { debug!("udp control connection closed"); }
     }
     Ok(())
 }

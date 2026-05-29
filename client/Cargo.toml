@@ -26,3 +26,11 @@ serde         = { version = "1", features = ["derive"] }
 serde_yaml    = "0.9"
 bytes         = "1"
 libc          = "0.2"
+socket2       = { version = "0.5", features = ["all"] }
+
+[profile.release]
+opt-level    = "z"
+strip        = true
+lto          = true
+codegen-units = 1
+panic        = "abort"

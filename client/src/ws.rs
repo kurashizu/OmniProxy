@@ -1,12 +1,22 @@
 use anyhow::{Context, Result};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use rand::RngCore;
+use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
+use std::sync::{OnceLock, RwLock};
 use tokio::net::TcpStream;
 use tokio_tungstenite::tungstenite::http::Request;
+use tracing::info;
 
 use crate::config::Config;
+
+// DNS cache: host → resolved IP. Once populated, DNS queries are skipped.
+static DNS_CACHE: OnceLock<RwLock<HashMap<String, IpAddr>>> = OnceLock::new();
+
+fn dns_cache() -> &'static RwLock<HashMap<String, IpAddr>> {
+    DNS_CACHE.get_or_init(|| RwLock::new(HashMap::new()))
+}
 
 pub(crate) type WsStream =
     tokio_tungstenite::WebSocketStream<tokio_rustls::client::TlsStream<TcpStream>>;
@@ -35,6 +45,7 @@ pub(crate) async fn build_ws(cfg: &Config) -> Result<WsStream> {
     let tls = build_tls_connector();
     let tcp = conn.connect_tcp().await?;
 
+    info!(host = %conn.host, "tls handshake");
     let tls = tls
         .connect(
             rustls::pki_types::ServerName::try_from(conn.host.as_str())
@@ -96,6 +107,8 @@ impl WsConn {
             format!("{host}:{port}")
         };
 
+        info!(scheme, host, port, "ws target resolved");
+
         Ok(Self {
             uri: format!(
                 "{}://{}{}",
@@ -107,50 +120,287 @@ impl WsConn {
             port,
             host_header,
             outbound_ip: cfg
-            .outbound_ip
-            .as_ref()
-            .map(|s| s.parse().with_context(|| format!("invalid outbound-ip: {s}")))
-            .transpose()?,
+                .outbound_ip
+                .as_ref()
+                .map(|s| s.parse().with_context(|| format!("invalid outbound-ip: {s}")))
+                .transpose()?,
         })
     }
 
     async fn connect_tcp(&self) -> Result<TcpStream> {
-        // 1) 不绑定源 IP 时，直接交给系统解析并连接。
-        if let None = self.outbound_ip {
-            return TcpStream::connect((self.host.as_str(), self.port))
+        match self.outbound_ip {
+            Some(ip) => {
+                info!(outbound_ip = %ip, "binding to outbound interface");
+                let remote = Self::resolve_remote_addr(&self.host, self.port, ip).await?;
+                let socket = if ip.is_ipv6() {
+                    tokio::net::TcpSocket::new_v6()?
+                } else {
+                    tokio::net::TcpSocket::new_v4()?
+                };
+                bind_to_interface(&socket, ip)?;
+                socket
+                    .bind(SocketAddr::new(ip, 0))
+                    .with_context(|| format!("bind {ip}"))?;
+                socket
+                    .connect(remote)
+                    .await
+                    .with_context(|| format!("tcp connect via {ip}"))
+            }
+            None => TcpStream::connect((self.host.as_str(), self.port))
                 .await
-                .with_context(|| format!("tcp connect to {}:{}", self.host, self.port));
+                .with_context(|| format!("tcp connect to {}:{}", self.host, self.port)),
+        }
+    }
+
+    /// Resolve host to SocketAddr. Caches result so subsequent calls skip DNS entirely.
+    async fn resolve_remote_addr(host: &str, port: u16, outbound_ip: IpAddr) -> Result<SocketAddr> {
+        // Cache hit — no DNS query at all.
+        if let Some(cached) = dns_cache().read().ok().and_then(|c| c.get(host).copied()) {
+            info!(host, ip = %cached, "dns cache hit");
+            return Ok(SocketAddr::new(cached, port));
         }
 
-        // 2) 绑定源 IP 时，先 bind 再连具体远端地址。
-        let ip = self.outbound_ip.expect("checked above");
-        let socket = match ip {
-            IpAddr::V4(_) => tokio::net::TcpSocket::new_v4()?,
-            IpAddr::V6(_) => tokio::net::TcpSocket::new_v6()?,
-        };
-
-        socket
-            .bind(SocketAddr::new(ip, 0))
-            .map_err(|e| anyhow::anyhow!("failed to bind outbound_ip {ip}: {e}"))?;
-
-        let remote = Self::resolve_remote_addr(self.host.as_str(), self.port, ip).await?;
-        socket
-            .connect(remote)
-            .await
-            .with_context(|| format!("tcp connect to {}:{} via {ip}", self.host, self.port))
-    }
-
-    async fn resolve_remote_addr(host: &str, port: u16, ip: IpAddr) -> Result<SocketAddr> {
+        // Cache miss — platform-specific DNS query.
         let addrs = tokio::net::lookup_host((host, port))
             .await
-            .with_context(|| format!("DNS lookup failed: {host}"))?;
+            .with_context(|| format!("dns lookup failed: {host}"))?;
 
-        addrs
+        let matched = addrs
             .into_iter()
             .find(|addr| {
-                matches!((ip, addr), (IpAddr::V4(_), SocketAddr::V4(_)))
-                    || matches!((ip, addr), (IpAddr::V6(_), SocketAddr::V6(_)))
+                matches!((outbound_ip, addr), (IpAddr::V4(_), SocketAddr::V4(_)))
+                    || matches!((outbound_ip, addr), (IpAddr::V6(_), SocketAddr::V6(_)))
             })
-            .ok_or_else(|| anyhow::anyhow!("no usable server address for {host}:{port}"))
+            .ok_or_else(|| anyhow::anyhow!("no usable server address for {host}:{port}"))?;
+
+        // Cache for next time.
+        if let Ok(mut cache) = dns_cache().write() {
+            cache.insert(host.to_string(), matched.ip());
+            info!(host, ip = %matched.ip(), "dns cached");
+        }
+
+        Ok(matched)
     }
+}
+
+// ── Cross-platform interface binding ──────────────────────────────────────────
+
+#[cfg(target_os = "linux")]
+fn iface_from_ip(target: IpAddr) -> Result<String> {
+    use std::ffi::CStr;
+
+    unsafe {
+        let mut ifap: *mut libc::ifaddrs = std::ptr::null_mut();
+        anyhow::ensure!(
+            libc::getifaddrs(&mut ifap) == 0,
+            "getifaddrs failed: {}",
+            std::io::Error::last_os_error()
+        );
+        struct Guard(*mut libc::ifaddrs);
+        impl Drop for Guard {
+            fn drop(&mut self) {
+                unsafe { libc::freeifaddrs(self.0) };
+            }
+        }
+        let _guard = Guard(ifap);
+
+        let mut cur = ifap;
+        while !cur.is_null() {
+            let ifa = &*cur;
+            cur = ifa.ifa_next;
+            if ifa.ifa_addr.is_null() {
+                continue;
+            }
+
+            let matched = match ((*ifa.ifa_addr).sa_family as i32, target) {
+                (libc::AF_INET, IpAddr::V4(target_v4)) => {
+                    let sin = &*(ifa.ifa_addr as *const libc::sockaddr_in);
+                    std::net::Ipv4Addr::from(u32::from_be(sin.sin_addr.s_addr)) == target_v4
+                }
+                (libc::AF_INET6, IpAddr::V6(target_v6)) => {
+                    let sin6 = &*(ifa.ifa_addr as *const libc::sockaddr_in6);
+                    std::net::Ipv6Addr::from(sin6.sin6_addr.s6_addr) == target_v6
+                }
+                _ => false,
+            };
+
+            if matched {
+                let name = CStr::from_ptr(ifa.ifa_name)
+                    .to_str()
+                    .context("interface name is not utf-8")?
+                    .to_owned();
+                return Ok(name);
+            }
+        }
+    }
+
+    anyhow::bail!("no interface found for IP {target}")
+}
+
+#[cfg(target_os = "windows")]
+fn iface_from_ip(target: IpAddr) -> Result<u32> {
+    use windows::Win32::NetworkManagement::IpHelper::{
+        GetAdaptersAddresses, GAA_FLAG_INCLUDE_PREFIX, IP_ADAPTER_ADDRESSES_LH,
+    };
+    use windows::Win32::Networking::WinSock::AF_INET;
+
+    unsafe {
+        let mut buf_len: u32 = 16384;
+        let mut buf: Vec<u8>;
+        loop {
+            buf = vec![0u8; buf_len as usize];
+            let ret = GetAdaptersAddresses(
+                AF_INET.0 as u32,
+                GAA_FLAG_INCLUDE_PREFIX,
+                None,
+                Some(buf.as_mut_ptr() as *mut IP_ADAPTER_ADDRESSES_LH),
+                &mut buf_len,
+            );
+            match ret {
+                0 => break,
+                111 => continue, // ERROR_BUFFER_OVERFLOW
+                e => anyhow::bail!("GetAdaptersAddresses failed: {e}"),
+            }
+        }
+
+        let mut p = buf.as_ptr() as *const IP_ADAPTER_ADDRESSES_LH;
+        while !p.is_null() {
+            let a = &*p;
+            let mut uni = a.FirstUnicastAddress;
+            while !uni.is_null() {
+                let sa = (*uni).Address.lpSockaddr;
+                if !sa.is_null() && (*sa).sa_family == AF_INET.0 as u16 {
+                    if let IpAddr::V4(v4) = target {
+                        let sin = &*(sa as *const windows::Win32::Networking::WinSock::SOCKADDR_IN);
+                        let ip = std::net::Ipv4Addr::from(u32::from_be(sin.sin_addr.S_un.S_addr));
+                        if ip == v4 {
+                            return Ok(a.Anonymous1.Anonymous.IfIndex);
+                        }
+                    }
+                }
+                uni = (*uni).Next;
+            }
+            p = a.Next;
+        }
+    }
+
+    anyhow::bail!("no interface found for IP {target}")
+}
+
+#[cfg(target_os = "linux")]
+fn bind_to_interface(socket: &tokio::net::TcpSocket, ip: IpAddr) -> Result<()> {
+    use socket2::SockRef;
+
+    let iface = iface_from_ip(ip)?;
+    info!(iface, "SO_BINDTODEVICE");
+    SockRef::from(socket)
+        .bind_device(Some(iface.as_bytes()))
+        .with_context(|| {
+            format!(
+                "SO_BINDTODEVICE({iface}) failed — requires CAP_NET_RAW or root"
+            )
+        })?;
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn bind_to_interface(socket: &tokio::net::TcpSocket, ip: IpAddr) -> Result<()> {
+    use std::os::windows::io::AsRawSocket;
+    use windows::Win32::Networking::WinSock::{setsockopt, IPPROTO_IP, IP_UNICAST_IF, SOCKET};
+
+    let idx = iface_from_ip(ip)?;
+    info!(idx, "IP_UNICAST_IF");
+    let idx_be = u32::to_be(idx);
+    let raw = socket.as_raw_socket();
+    unsafe {
+        setsockopt(
+            SOCKET(raw as usize),
+            IPPROTO_IP.0 as i32,
+            IP_UNICAST_IF as i32,
+            Some(&idx_be.to_ne_bytes()),
+        )
+        .ok()
+        .with_context(|| format!("IP_UNICAST_IF(idx={idx}) failed"))?;
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn iface_from_ip(target: IpAddr) -> Result<String> {
+    use std::ffi::CStr;
+
+    unsafe {
+        let mut ifap: *mut libc::ifaddrs = std::ptr::null_mut();
+        anyhow::ensure!(
+            libc::getifaddrs(&mut ifap) == 0,
+            "getifaddrs failed: {}",
+            std::io::Error::last_os_error()
+        );
+        struct Guard(*mut libc::ifaddrs);
+        impl Drop for Guard {
+            fn drop(&mut self) {
+                unsafe { libc::freeifaddrs(self.0) };
+            }
+        }
+        let _guard = Guard(ifap);
+
+        let mut cur = ifap;
+        while !cur.is_null() {
+            let ifa = &*cur;
+            cur = ifa.ifa_next;
+            if ifa.ifa_addr.is_null() {
+                continue;
+            }
+
+            let matched = match ((*ifa.ifa_addr).sa_family as i32, target) {
+                (libc::AF_INET, IpAddr::V4(target_v4)) => {
+                    let sin = &*(ifa.ifa_addr as *const libc::sockaddr_in);
+                    std::net::Ipv4Addr::from(u32::from_be(sin.sin_addr.s_addr)) == target_v4
+                }
+                (libc::AF_INET6, IpAddr::V6(target_v6)) => {
+                    let sin6 = &*(ifa.ifa_addr as *const libc::sockaddr_in6);
+                    std::net::Ipv6Addr::from(sin6.sin6_addr.s6_addr) == target_v6
+                }
+                _ => false,
+            };
+
+            if matched {
+                let name = CStr::from_ptr(ifa.ifa_name)
+                    .to_str()
+                    .context("interface name is not utf-8")?
+                    .to_owned();
+                return Ok(name);
+            }
+        }
+    }
+
+    anyhow::bail!("no interface found for IP {target}")
+}
+
+#[cfg(target_os = "macos")]
+fn bind_to_interface(socket: &tokio::net::TcpSocket, ip: IpAddr) -> Result<()> {
+    use std::os::fd::AsRawFd;
+
+    let iface = iface_from_ip(ip)?;
+    let idx = unsafe { libc::if_nametoindex(iface.as_bytes().as_ptr() as *const _) };
+    anyhow::ensure!(idx != 0, "if_nametoindex failed for interface {iface}");
+
+    info!(iface, idx, "IP_BOUND_IF");
+    let ret = unsafe {
+        libc::setsockopt(
+            socket.as_raw_fd(),
+            libc::IPPROTO_IP,
+            libc::IP_BOUND_IF,
+            &idx as *const u32 as *const _,
+            std::mem::size_of::<u32>() as libc::socklen_t,
+        )
+    };
+    anyhow::ensure!(ret == 0, "IP_BOUND_IF failed: {}", std::io::Error::last_os_error());
+
+    Ok(())
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+fn bind_to_interface(_socket: &tokio::net::TcpSocket, _ip: IpAddr) -> Result<()> {
+    anyhow::bail!("outbound-ip interface binding not yet supported on this platform")
 }
