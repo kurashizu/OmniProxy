@@ -58,19 +58,38 @@ mod routes {
         }
 
         let out = std::process::Command::new("ip")
-            .args(["addr", "add", &format!("{}/{}", cfg.tun_ip, cfg.tun_prefix), "dev", tun])
+            .args([
+                "addr",
+                "add",
+                &format!("{}/{}", cfg.tun_ip, cfg.tun_prefix),
+                "dev",
+                tun,
+            ])
             .output()
             .map_err(|e| anyhow::anyhow!("ip addr add: {e}"))?;
         if !out.status.success() {
-            debug!("ip addr add: {}", String::from_utf8_lossy(&out.stderr).trim());
+            debug!(
+                "ip addr add: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            );
         }
 
         let out = std::process::Command::new("ip")
-            .args(["-6", "addr", "add", &format!("{}/{}", cfg.tun_ip6, cfg.tun_prefix6), "dev", tun])
+            .args([
+                "-6",
+                "addr",
+                "add",
+                &format!("{}/{}", cfg.tun_ip6, cfg.tun_prefix6),
+                "dev",
+                tun,
+            ])
             .output()
             .map_err(|e| anyhow::anyhow!("ip -6 addr add: {e}"))?;
         if !out.status.success() {
-            debug!("ip -6 addr add: {}", String::from_utf8_lossy(&out.stderr).trim());
+            debug!(
+                "ip -6 addr add: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            );
         }
 
         let out = std::process::Command::new("ip")
@@ -78,7 +97,10 @@ mod routes {
             .output()
             .map_err(|e| anyhow::anyhow!("ip route add: {e}"))?;
         if !out.status.success() {
-            debug!("ip route add: {}", String::from_utf8_lossy(&out.stderr).trim());
+            debug!(
+                "ip route add: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            );
         }
 
         let out = std::process::Command::new("ip")
@@ -162,20 +184,39 @@ mod routes {
         }
 
         let out = std::process::Command::new("ifconfig")
-            .args([&cfg.tun_name, "inet6", &format!("{}/{}", cfg.tun_ip6, cfg.tun_prefix6), "up"])
+            .args([
+                &cfg.tun_name,
+                "inet6",
+                &format!("{}/{}", cfg.tun_ip6, cfg.tun_prefix6),
+                "up",
+            ])
             .output()?;
         if !out.status.success() {
-            debug!("ifconfig inet6: {}", String::from_utf8_lossy(&out.stderr).trim());
+            debug!(
+                "ifconfig inet6: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            );
         }
 
         if let Ok((gw, phys_iface)) = detect_physical_gateway() {
             info!(gateway = %gw, iface = %phys_iface, "[tun] adding scoped route for IP_BOUND_IF");
             let out = std::process::Command::new("route")
-                .args(["-n", "add", "-net", "0.0.0.0/0", &gw.to_string(), "-ifscope", &phys_iface])
+                .args([
+                    "-n",
+                    "add",
+                    "-net",
+                    "0.0.0.0/0",
+                    &gw.to_string(),
+                    "-ifscope",
+                    &phys_iface,
+                ])
                 .output();
             match out {
                 Ok(o) if !o.status.success() => {
-                    debug!("route add -ifscope: {}", String::from_utf8_lossy(&o.stderr).trim());
+                    debug!(
+                        "route add -ifscope: {}",
+                        String::from_utf8_lossy(&o.stderr).trim()
+                    );
                 }
                 Err(e) => debug!("route add -ifscope failed: {e}"),
                 _ => {}
@@ -189,7 +230,10 @@ mod routes {
                 .args(["-n", "add", "-net", prefix, &cfg.tun_ip])
                 .output()?;
             if !out.status.success() {
-                debug!("route add -net {prefix}: {}", String::from_utf8_lossy(&out.stderr).trim());
+                debug!(
+                    "route add -net {prefix}: {}",
+                    String::from_utf8_lossy(&out.stderr).trim()
+                );
             }
         }
         for prefix in ["::/1", "8000::/1"] {
@@ -197,7 +241,10 @@ mod routes {
                 .args(["-n", "add", "-inet6", "-net", prefix, &cfg.tun_ip6])
                 .output()?;
             if !out.status.success() {
-                debug!("route add -inet6 {prefix}: {}", String::from_utf8_lossy(&out.stderr).trim());
+                debug!(
+                    "route add -inet6 {prefix}: {}",
+                    String::from_utf8_lossy(&out.stderr).trim()
+                );
             }
         }
 
@@ -208,7 +255,15 @@ mod routes {
     pub fn remove(cfg: &Config) {
         if let Ok((gw, phys_iface)) = detect_physical_gateway() {
             let _ = std::process::Command::new("route")
-                .args(["-n", "delete", "-net", "0.0.0.0/0", &gw.to_string(), "-ifscope", &phys_iface])
+                .args([
+                    "-n",
+                    "delete",
+                    "-net",
+                    "0.0.0.0/0",
+                    &gw.to_string(),
+                    "-ifscope",
+                    &phys_iface,
+                ])
                 .output();
         }
         for prefix in ["0.0.0.0/1", "128.0.0.0/1"] {
@@ -255,7 +310,10 @@ mod routes {
             "Set-NetIPInterface -InterfaceIndex {idx} -AutomaticMetric Disabled -InterfaceMetric 1"
         ))?;
         if !out.status.success() {
-            debug!("Set-NetIPInterface: {}", String::from_utf8_lossy(&out.stderr).trim());
+            debug!(
+                "Set-NetIPInterface: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            );
         }
 
         let out = powershell(&format!(
@@ -263,7 +321,10 @@ mod routes {
             cfg.tun_ip, cfg.tun_prefix, cfg.tun_gw
         ))?;
         if !out.status.success() {
-            debug!("New-NetIPAddress: {}", String::from_utf8_lossy(&out.stderr).trim());
+            debug!(
+                "New-NetIPAddress: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            );
         }
 
         let out = powershell(&format!(
@@ -272,7 +333,10 @@ mod routes {
             cfg.tun_gw
         ))?;
         if !out.status.success() {
-            debug!("default v4 route: {}", String::from_utf8_lossy(&out.stderr).trim());
+            debug!(
+                "default v4 route: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            );
         }
 
         let out = powershell(&format!(
@@ -280,7 +344,10 @@ mod routes {
              New-NetRoute -InterfaceIndex {idx} -DestinationPrefix '::/0' -NextHop 'fe80::1' -RouteMetric 1"
         ))?;
         if !out.status.success() {
-            debug!("default v6 route: {}", String::from_utf8_lossy(&out.stderr).trim());
+            debug!(
+                "default v6 route: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            );
         }
 
         info!("[tun] TUN routes configured (Windows, idx={})", idx);

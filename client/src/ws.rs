@@ -114,7 +114,11 @@ impl WsConn {
                 "{}://{}{}",
                 scheme,
                 host,
-                if parsed.path().is_empty() { "/" } else { parsed.path() }
+                if parsed.path().is_empty() {
+                    "/"
+                } else {
+                    parsed.path()
+                }
             ),
             host: host.to_string(),
             port,
@@ -122,7 +126,10 @@ impl WsConn {
             outbound_ip: cfg
                 .outbound_ip
                 .as_ref()
-                .map(|s| s.parse().with_context(|| format!("invalid outbound-ip: {s}")))
+                .map(|s| {
+                    s.parse()
+                        .with_context(|| format!("invalid outbound-ip: {s}"))
+                })
                 .transpose()?,
         })
     }
@@ -269,7 +276,10 @@ fn iface_from_ip(target: IpAddr) -> Result<u32> {
             let mut uni = a.FirstUnicastAddress;
             while !uni.is_null() {
                 let sa = (*uni).Address.lpSockaddr;
-                if !sa.is_null() && (*sa).sa_family == windows::Win32::Networking::WinSock::ADDRESS_FAMILY(AF_INET.0 as u16) {
+                if !sa.is_null()
+                    && (*sa).sa_family
+                        == windows::Win32::Networking::WinSock::ADDRESS_FAMILY(AF_INET.0 as u16)
+                {
                     if let IpAddr::V4(v4) = target {
                         let sin = &*(sa as *const windows::Win32::Networking::WinSock::SOCKADDR_IN);
                         let ip = std::net::Ipv4Addr::from(u32::from_be(sin.sin_addr.S_un.S_addr));
@@ -296,9 +306,7 @@ fn bind_to_interface(socket: &tokio::net::TcpSocket, ip: IpAddr) -> Result<()> {
     SockRef::from(socket)
         .bind_device(Some(iface.as_bytes()))
         .with_context(|| {
-            format!(
-                "SO_BINDTODEVICE({iface}) failed — requires CAP_NET_RAW or root"
-            )
+            format!("SO_BINDTODEVICE({iface}) failed — requires CAP_NET_RAW or root")
         })?;
     Ok(())
 }
@@ -394,7 +402,11 @@ fn bind_to_interface(socket: &tokio::net::TcpSocket, ip: IpAddr) -> Result<()> {
             std::mem::size_of::<u32>() as libc::socklen_t,
         )
     };
-    anyhow::ensure!(ret == 0, "IP_BOUND_IF failed: {}", std::io::Error::last_os_error());
+    anyhow::ensure!(
+        ret == 0,
+        "IP_BOUND_IF failed: {}",
+        std::io::Error::last_os_error()
+    );
 
     Ok(())
 }

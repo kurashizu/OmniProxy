@@ -142,15 +142,13 @@ Route all system traffic through the proxy. The proxy binary sets up TUN, config
 sudo ./proxy --config ./config.yml
 ```
 
-### Windows
+### Windows (Driver by [Wintun](https://www.wintun.net/))
 
 Run with administrator privileges:
 
 ```powershell
 .\proxy.exe --config .\config.yml
 ```
-
-**Windows note:** On Windows, the client needs `--outbound-ip` to bind the physical NIC IP. The proxy auto-detects this and passes it to the client, preventing traffic from looping through the TUN interface.
 
 ### How it works
 
@@ -168,10 +166,6 @@ Run with administrator privileges:
   - Linux: TUN/TAP support, iproute2, sudo access
   - macOS: sudo access, utun interface support (macOS 10.13+)
   - Windows: Administrator privileges, wintun.dll (included in release)
-
-## Credits
-
-Powered by [Wintun](https://www.wintun.net/).
 
 ## License
 

@@ -8,12 +8,12 @@ use tokio::sync::{mpsc, oneshot, RwLock};
 use tokio_tungstenite::tungstenite::Message;
 use tracing::{debug, info, warn};
 
-use crate::codec::{
+use crate::config::Config;
+use crate::ws::build_ws;
+use protocol::{
     decode_frame, decode_udp_payload, encode_frame, encode_udp_payload, TYPE_TCP_CONNECT,
     TYPE_TCP_CONNECTED, TYPE_TCP_DATA, TYPE_TCP_FIN, TYPE_UDP_DATA, UDP_STREAM_ID,
 };
-use crate::config::Config;
-use crate::ws::build_ws;
 
 pub(crate) struct MuxInner {
     streams: HashMap<u32, mpsc::Sender<bytes::Bytes>>,
@@ -247,7 +247,7 @@ fn spawn_reconnect_loop(mux: Arc<Mux>, mut disc_rx: oneshot::Receiver<()>) {
         loop {
             let _ = disc_rx.await;
             if retry >= 5 {
-            warn!("reconnect limit reached, stop retrying");
+                warn!("reconnect limit reached, stop retrying");
                 break;
             }
             retry += 1;

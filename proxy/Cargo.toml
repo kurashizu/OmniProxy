@@ -1,7 +1,7 @@
 [package]
 name = "proxy"
-version = "1.0.0-rc"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 
 [[bin]]
 name = "proxy"
@@ -23,10 +23,3 @@ bytes        = "1"
 
 [target.'cfg(unix)'.dependencies]
 libc         = "0.2"
-
-[profile.release]
-opt-level    = "z"
-strip        = true
-lto          = true
-codegen-units = 1
-panic        = "abort"

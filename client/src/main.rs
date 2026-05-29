@@ -3,7 +3,6 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 use tracing::{debug, info};
 
-mod codec;
 mod bootstrap;
 mod config;
 mod mux;

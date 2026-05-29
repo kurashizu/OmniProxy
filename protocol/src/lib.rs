@@ -1,14 +1,15 @@
 use anyhow::Result;
 use bytes::{BufMut, Bytes, BytesMut};
 
-pub(crate) const TYPE_TCP_CONNECT: u8 = 0x01;
-pub(crate) const TYPE_TCP_CONNECTED: u8 = 0x02;
-pub(crate) const TYPE_TCP_DATA: u8 = 0x03;
-pub(crate) const TYPE_TCP_FIN: u8 = 0x04;
-pub(crate) const TYPE_UDP_DATA: u8 = 0x05;
-pub(crate) const UDP_STREAM_ID: u32 = 0;
+pub const TYPE_TCP_CONNECT: u8 = 0x01;
+pub const TYPE_TCP_CONNECTED: u8 = 0x02;
+pub const TYPE_TCP_DATA: u8 = 0x03;
+pub const TYPE_TCP_FIN: u8 = 0x04;
+pub const TYPE_UDP_DATA: u8 = 0x05;
 
-pub(crate) fn encode_frame(stream_id: u32, typ: u8, payload: &[u8]) -> Bytes {
+pub const UDP_STREAM_ID: u32 = 0;
+
+pub fn encode_frame(stream_id: u32, typ: u8, payload: &[u8]) -> Bytes {
     let mut buf = BytesMut::with_capacity(5 + payload.len());
     buf.put_u32(stream_id);
     buf.put_u8(typ);
@@ -16,7 +17,7 @@ pub(crate) fn encode_frame(stream_id: u32, typ: u8, payload: &[u8]) -> Bytes {
     buf.freeze()
 }
 
-pub(crate) fn decode_frame(data: &[u8]) -> Result<(u32, u8, Bytes)> {
+pub fn decode_frame(data: &[u8]) -> Result<(u32, u8, Bytes)> {
     if data.len() < 5 {
         anyhow::bail!("frame too short: {}B", data.len());
     }
@@ -26,7 +27,7 @@ pub(crate) fn decode_frame(data: &[u8]) -> Result<(u32, u8, Bytes)> {
     Ok((stream_id, typ, payload))
 }
 
-pub(crate) fn encode_udp_payload(host: &str, port: u16, data: &[u8]) -> Bytes {
+pub fn encode_udp_payload(host: &str, port: u16, data: &[u8]) -> Bytes {
     let hb = host.as_bytes();
     let mut buf = BytesMut::with_capacity(4 + hb.len() + data.len());
     buf.put_u16(hb.len() as u16);
@@ -36,7 +37,7 @@ pub(crate) fn encode_udp_payload(host: &str, port: u16, data: &[u8]) -> Bytes {
     buf.freeze()
 }
 
-pub(crate) fn decode_udp_payload(payload: &[u8]) -> Result<(String, u16, Bytes)> {
+pub fn decode_udp_payload(payload: &[u8]) -> Result<(String, u16, Bytes)> {
     if payload.len() < 4 {
         anyhow::bail!("udp payload too short");
     }

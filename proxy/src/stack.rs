@@ -82,8 +82,7 @@ pub async fn run_stack(cfg: Arc<Config>, outbound_ip: IpAddr) -> Result<()> {
     let tun_dev = forwarder::tun_up(&cfg).context("tun_up")?;
 
     info!("[stack] creating forwarder");
-    let mut fwd = Forwarder::new(tun_dev, cfg.socks_port)
-        .context("create forwarder")?;
+    let mut fwd = Forwarder::new(tun_dev, cfg.socks_port).context("create forwarder")?;
 
     info!("[stack] proxy running");
     tokio::select! {

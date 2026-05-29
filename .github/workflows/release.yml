@@ -23,22 +23,22 @@ jobs:
                     - target: x86_64-unknown-linux-musl
                       os: ubuntu-latest
                       ext: ""
-                      zip: omni-proxy-linux-x86_64-musl.zip
+                      zip: omni-proxy-linux-x86_64-musl.tar.xz
 
                     - target: aarch64-unknown-linux-musl
                       os: ubuntu-24.04-arm
                       ext: ""
-                      zip: omni-proxy-linux-aarch64-musl.zip
+                      zip: omni-proxy-linux-aarch64-musl.tar.xz
 
                     - target: x86_64-apple-darwin
                       os: macos-latest
                       ext: ""
-                      zip: omni-proxy-macos-x86_64.zip
+                      zip: omni-proxy-macos-x86_64.tar.xz
 
                     - target: aarch64-apple-darwin
                       os: macos-latest
                       ext: ""
-                      zip: omni-proxy-macos-aarch64.zip
+                      zip: omni-proxy-macos-aarch64.tar.xz
 
         runs-on: ${{ matrix.os }}
 
@@ -59,37 +59,18 @@ jobs:
             - name: Cache cargo
               uses: Swatinem/rust-cache@v2
               with:
-                  workspaces: |
-                      client
-                      server
-                      proxy
+                  workspaces: "."
 
             # ── Build ───────────────────────────────────────────────────────────────
-            - name: Build client
+            - name: Build all
               env:
                   RUSTFLAGS: ${{ startsWith(matrix.os, 'windows') && '-Ctarget-feature=+crt-static' || '' }}
               run: |
-                  cargo build --release --manifest-path client/Cargo.toml --target ${{ matrix.target }}
+                  cargo build -p client -p server -p proxy --release --target ${{ matrix.target }}
                   mkdir -p dist
-                  cp client/target/${{ matrix.target }}/release/client${{ matrix.ext }} dist/
-              shell: bash
-
-            - name: Build server
-              env:
-                  RUSTFLAGS: ${{ startsWith(matrix.os, 'windows') && '-Ctarget-feature=+crt-static' || '' }}
-              run: |
-                  cargo build --release --manifest-path server/Cargo.toml --target ${{ matrix.target }}
-                  mkdir -p dist
-                  cp server/target/${{ matrix.target }}/release/server${{ matrix.ext }} dist/
-              shell: bash
-
-            - name: Build proxy
-              env:
-                  RUSTFLAGS: ${{ startsWith(matrix.os, 'windows') && '-Ctarget-feature=+crt-static' || '' }}
-              run: |
-                  cargo build --release --manifest-path proxy/Cargo.toml --target ${{ matrix.target }}
-                  mkdir -p dist
-                  cp proxy/target/${{ matrix.target }}/release/proxy${{ matrix.ext }} dist/
+                  cp target/${{ matrix.target }}/release/client${{ matrix.ext }} dist/
+                  cp target/${{ matrix.target }}/release/server${{ matrix.ext }} dist/
+                  cp target/${{ matrix.target }}/release/proxy${{ matrix.ext }} dist/
               shell: bash
 
             # Ad-hoc sign macOS binaries so Gatekeeper doesn't block them on first run
@@ -133,7 +114,7 @@ jobs:
               run: |
                   cp README.md dist/ || true
                   cp proxy/config.linux.yml dist/config.yml || true
-                  zip -r ${{ matrix.zip }} dist/
+                  tar -cJf ${{ matrix.zip }} dist/
               shell: bash
 
             - name: Package macOS
@@ -142,7 +123,7 @@ jobs:
                   cp README.md dist/ || true
                   cp proxy/config.macos.yml dist/config.yml || true
                   cp scripts/setup_macos.sh dist/
-                  zip -r ${{ matrix.zip }} dist/
+                  tar -cJf ${{ matrix.zip }} dist/
               shell: bash
 
             - name: Package Windows
@@ -177,7 +158,9 @@ jobs:
             - name: Upload to release
               uses: softprops/action-gh-release@v3
               with:
-                  files: artifacts/*.zip
+                  files: |
+                      artifacts/*.zip
+                      artifacts/*.tar.xz
                   generate_release_notes: true
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

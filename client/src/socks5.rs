@@ -27,14 +27,20 @@ pub async fn handle(stream: TcpStream, mux: Arc<Mux>) -> Result<()> {
         Socks5Command::TCPConnect => handle_tcp(proto, target_addr, mux).await,
         Socks5Command::UDPAssociate => handle_udp(proto, mux).await,
         _ => {
-            proto.reply_error(&ReplyError::CommandNotSupported).await.ok();
+            proto
+                .reply_error(&ReplyError::CommandNotSupported)
+                .await
+                .ok();
             anyhow::bail!("unsupported cmd: {cmd:?}")
         }
     }
 }
 
 async fn handle_tcp(
-    proto: fast_socks5::server::Socks5ServerProtocol<TcpStream, fast_socks5::server::states::CommandRead>,
+    proto: fast_socks5::server::Socks5ServerProtocol<
+        TcpStream,
+        fast_socks5::server::states::CommandRead,
+    >,
     target_addr: TargetAddr,
     mux: Arc<Mux>,
 ) -> Result<()> {
@@ -76,7 +82,9 @@ async fn handle_tcp(
             if n == 0 {
                 break;
             }
-            mux_up.tcp_data(stream_id, bytes::Bytes::copy_from_slice(&buf[..n])).await?;
+            mux_up
+                .tcp_data(stream_id, bytes::Bytes::copy_from_slice(&buf[..n]))
+                .await?;
         }
         mux_up.tcp_fin(stream_id).await;
         anyhow::Ok(())
@@ -97,7 +105,10 @@ async fn handle_tcp(
 }
 
 async fn handle_udp(
-    proto: fast_socks5::server::Socks5ServerProtocol<TcpStream, fast_socks5::server::states::CommandRead>,
+    proto: fast_socks5::server::Socks5ServerProtocol<
+        TcpStream,
+        fast_socks5::server::states::CommandRead,
+    >,
     mux: Arc<Mux>,
 ) -> Result<()> {
     debug!("socks5 udp associate");

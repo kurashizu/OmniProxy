@@ -6,7 +6,7 @@ mod udp;
 use anyhow::{Context, Result};
 use bytes::BytesMut;
 use futures::{SinkExt, StreamExt};
-use netstack_smoltcp::{StackBuilder, TcpListener, UdpSocket, Stack};
+use netstack_smoltcp::{Stack, StackBuilder, TcpListener, UdpSocket};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
@@ -20,7 +20,8 @@ pub struct Forwarder {
     stack: Option<Stack>,
     tcp_listener: Option<TcpListener>,
     udp_socket: Option<UdpSocket>,
-    tun_framed: Option<tun_rs::async_framed::DeviceFramed<BytesCodec, std::sync::Arc<tun_rs::AsyncDevice>>>,
+    tun_framed:
+        Option<tun_rs::async_framed::DeviceFramed<BytesCodec, std::sync::Arc<tun_rs::AsyncDevice>>>,
     socks_port: u16,
 }
 
@@ -98,7 +99,12 @@ impl Forwarder {
                             } else {
                                 "SHORT"
                             };
-                            debug!("[forwarder] tun->stack: {} bytes (#{}) proto={}", p.len(), count, proto);
+                            debug!(
+                                "[forwarder] tun->stack: {} bytes (#{}) proto={}",
+                                p.len(),
+                                count,
+                                proto
+                            );
                         }
                         if stack_sink.send(p.to_vec()).await.is_err() {
                             warn!("[forwarder] stack sink closed");
@@ -133,7 +139,10 @@ impl Forwarder {
 
         // Handle TCP connections
         let socks_port = self.socks_port;
-        let mut tcp_listener = self.tcp_listener.take().expect("tcp_listener already taken");
+        let mut tcp_listener = self
+            .tcp_listener
+            .take()
+            .expect("tcp_listener already taken");
         let tcp_task = tokio::spawn(async move {
             while let Some((stream, _src, dst)) = tcp_listener.next().await {
                 let sp = socks_port;

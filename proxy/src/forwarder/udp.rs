@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use futures::{SinkExt, StreamExt};
 #[cfg(unix)]
 use libc;
-use netstack_smoltcp::udp::{ReadHalf, WriteHalf, UdpMsg};
+use netstack_smoltcp::udp::{ReadHalf, UdpMsg, WriteHalf};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -24,8 +24,8 @@ struct SessionKey {
 
 struct UdpSession {
     relay_socket: Arc<UdpSocket>,
-    relay_addr: SocketAddr,      // SOCKS5 relay UDP 地址
-    _control: TcpStream,         // SOCKS5 TCP 控制连接（保持 alive）
+    relay_addr: SocketAddr, // SOCKS5 relay UDP 地址
+    _control: TcpStream,    // SOCKS5 TCP 控制连接（保持 alive）
     last_active: Instant,
 }
 
@@ -141,14 +141,20 @@ async fn create_session(
             control.read_exact(&mut addr).await?;
             let mut port_buf = [0u8; 2];
             control.read_exact(&mut port_buf).await?;
-            SocketAddr::new(std::net::Ipv4Addr::from(addr).into(), u16::from_be_bytes(port_buf))
+            SocketAddr::new(
+                std::net::Ipv4Addr::from(addr).into(),
+                u16::from_be_bytes(port_buf),
+            )
         }
         0x04 => {
             let mut addr = [0u8; 16];
             control.read_exact(&mut addr).await?;
             let mut port_buf = [0u8; 2];
             control.read_exact(&mut port_buf).await?;
-            SocketAddr::new(std::net::Ipv6Addr::from(addr).into(), u16::from_be_bytes(port_buf))
+            SocketAddr::new(
+                std::net::Ipv6Addr::from(addr).into(),
+                u16::from_be_bytes(port_buf),
+            )
         }
         other => anyhow::bail!("unexpected ATYP in UDP ASSOCIATE reply: {other:#x}"),
     };
@@ -234,7 +240,10 @@ fn reap_idle(sessions: &mut HashMap<SessionKey, UdpSession>) {
     });
     let removed = before - sessions.len();
     if removed > 0 {
-        debug!("[udp] reaped {removed} sessions, {} remaining", sessions.len());
+        debug!(
+            "[udp] reaped {removed} sessions, {} remaining",
+            sessions.len()
+        );
     }
 }
 
@@ -265,12 +274,13 @@ fn strip_socks5_udp_header(buf: &[u8]) -> Result<Vec<u8>> {
     anyhow::ensure!(buf[0] == 0 && buf[1] == 0, "RSV != 0");
     anyhow::ensure!(buf[2] == 0, "FRAG != 0");
     let payload_start = match buf[3] {
-        0x01 => 10,  // IPv4: 3+1+1+4+2
-        0x03 => {    // Domain: 3+1+1+1+len+2
+        0x01 => 10, // IPv4: 3+1+1+4+2
+        0x03 => {
+            // Domain: 3+1+1+1+len+2
             anyhow::ensure!(buf.len() >= 5, "domain len truncated");
             7 + buf[4] as usize
         }
-        0x04 => 22,  // IPv6: 3+1+1+16+2
+        0x04 => 22, // IPv6: 3+1+1+16+2
         t => anyhow::bail!("unknown ATYP: {t:#x}"),
     };
     anyhow::ensure!(buf.len() >= payload_start, "truncated");
@@ -296,7 +306,10 @@ mod tests {
         let dst: SocketAddr = "[::1]:53".parse().unwrap();
         let pkt = build_socks5_udp_packet(dst, b"hello");
         assert_eq!(pkt[3], 0x04);
-        assert_eq!(&pkt[4..20], &[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]);
+        assert_eq!(
+            &pkt[4..20],
+            &[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]
+        );
         assert_eq!(&pkt[20..22], &[0x00, 0x35]);
         assert_eq!(&pkt[22..], b"hello");
     }

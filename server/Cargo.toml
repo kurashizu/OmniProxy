@@ -1,29 +1,22 @@
 [package]
 name = "server"
-version = "1.0.0-rc"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 
 [[bin]]
 name = "server"
 path = "src/main.rs"
 
 [dependencies]
-tokio = { version = "1", features = ["full"] }
-axum = { version = "0.8", features = ["ws"] }
-futures-util = "0.3"
-anyhow = "1"
-tracing = "0.1"
+protocol       = { path = "../protocol" }
+tokio          = { version = "1", features = ["full"] }
+axum           = { version = "0.8", features = ["ws"] }
+futures-util   = "0.3"
+anyhow         = "1"
+tracing        = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-clap = { version = "4", features = ["derive"] }
-serde = { version = "1", features = ["derive"] }
-serde_yaml = "0.9"
-bytes = "1"
-dashmap = "6"
-tokio-util = { version = "0.7", features = ["codec"] }
-
-[profile.release]
-opt-level    = "z"
-strip        = true
-lto          = true
-codegen-units = 1
-panic        = "abort"
+clap           = { version = "4", features = ["derive"] }
+serde          = { version = "1", features = ["derive"] }
+serde_yaml     = "0.9"
+bytes          = "1"
+dashmap        = "6"
