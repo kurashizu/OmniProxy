@@ -254,7 +254,7 @@ async fn handle_udp(mut stream: TcpStream, mux: Arc<Mux>) -> Result<()> {
     let local_addr = udp.local_addr()?;
     write_socks5_reply(&mut stream, REP_SUCCESS, &local_addr).await?;
 
-    let mut udp_rx = mux.register_udp().await;
+    let (stream_id, mut udp_rx) = mux.register_udp().await;
     let client_addr: Arc<Mutex<Option<SocketAddr>>> = Arc::new(Mutex::new(None));
 
     let udp_recv = udp.clone();
@@ -278,7 +278,7 @@ async fn handle_udp(mut stream: TcpStream, mux: Arc<Mux>) -> Result<()> {
                     continue;
                 }
             };
-            mux_up.udp_send(&host, port, &buf[data_offset..n]).await?;
+            mux_up.udp_send(stream_id, &host, port, &buf[data_offset..n]).await?;
         }
         #[allow(unreachable_code)]
         anyhow::Ok(())
@@ -308,6 +308,8 @@ async fn handle_udp(mut stream: TcpStream, mux: Arc<Mux>) -> Result<()> {
         r = mux_to_local => { r.ok(); }
         _ = tcp_watch    => { debug!("udp control connection closed"); }
     }
+
+    mux.unregister_udp(stream_id).await;
     Ok(())
 }
 

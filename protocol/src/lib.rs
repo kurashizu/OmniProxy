@@ -7,8 +7,6 @@ pub const TYPE_TCP_DATA: u8 = 0x03;
 pub const TYPE_TCP_FIN: u8 = 0x04;
 pub const TYPE_UDP_DATA: u8 = 0x05;
 
-pub const UDP_STREAM_ID: u32 = 0;
-
 pub fn encode_frame(stream_id: u32, typ: u8, payload: &[u8]) -> Bytes {
     let mut buf = BytesMut::with_capacity(5 + payload.len());
     buf.put_u32(stream_id);

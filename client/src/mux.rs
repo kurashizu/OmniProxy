@@ -12,13 +12,13 @@ use crate::config::Config;
 use crate::ws::build_ws;
 use protocol::{
     decode_frame, decode_udp_payload, encode_frame, encode_udp_payload, TYPE_TCP_CONNECT,
-    TYPE_TCP_CONNECTED, TYPE_TCP_DATA, TYPE_TCP_FIN, TYPE_UDP_DATA, UDP_STREAM_ID,
+    TYPE_TCP_CONNECTED, TYPE_TCP_DATA, TYPE_TCP_FIN, TYPE_UDP_DATA,
 };
 
 pub(crate) struct MuxInner {
     streams: HashMap<u32, mpsc::Sender<bytes::Bytes>>,
     connect_notify: HashMap<u32, oneshot::Sender<Result<()>>>,
-    udp_tx: Option<mpsc::Sender<(String, u16, bytes::Bytes)>>,
+    udp_txs: HashMap<u32, mpsc::Sender<(String, u16, bytes::Bytes)>>,
     frame_tx: Option<mpsc::Sender<bytes::Bytes>>,
 }
 
@@ -27,7 +27,7 @@ impl MuxInner {
         MuxInner {
             streams: HashMap::new(),
             connect_notify: HashMap::new(),
-            udp_tx: None,
+            udp_txs: HashMap::new(),
             frame_tx: None,
         }
     }
@@ -35,7 +35,7 @@ impl MuxInner {
     fn clear(&mut self) {
         self.streams.clear();
         self.connect_notify.clear();
-        self.udp_tx = None;
+        self.udp_txs.clear();
         self.frame_tx = None;
     }
 }
@@ -64,12 +64,7 @@ impl Mux {
     }
 
     fn alloc_id(&self) -> u32 {
-        loop {
-            let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-            if id != UDP_STREAM_ID {
-                return id;
-            }
-        }
+        self.next_id.fetch_add(1, Ordering::Relaxed)
     }
 
     async fn frame_tx(&self) -> Option<mpsc::Sender<bytes::Bytes>> {
@@ -167,7 +162,7 @@ impl Mux {
                         TYPE_UDP_DATA => {
                             if let Ok((host, port, data)) = decode_udp_payload(&payload) {
                                 let inner = self.inner.read().await;
-                                if let Some(tx) = &inner.udp_tx {
+                                if let Some(tx) = inner.udp_txs.get(&id) {
                                     tx.send((host, port, data)).await.ok();
                                 }
                             }
@@ -227,16 +222,21 @@ impl Mux {
         self.inner.write().await.streams.remove(&id);
     }
 
-    pub(crate) async fn register_udp(&self) -> mpsc::Receiver<(String, u16, bytes::Bytes)> {
+    pub(crate) async fn register_udp(&self) -> (u32, mpsc::Receiver<(String, u16, bytes::Bytes)>) {
+        let id = self.alloc_id();
         let (tx, rx) = mpsc::channel(256);
-        self.inner.write().await.udp_tx = Some(tx);
-        rx
+        self.inner.write().await.udp_txs.insert(id, tx);
+        (id, rx)
     }
 
-    pub(crate) async fn udp_send(&self, host: &str, port: u16, data: &[u8]) -> Result<()> {
-        debug!(host, port, "udp send");
+    pub(crate) async fn unregister_udp(&self, id: u32) {
+        self.inner.write().await.udp_txs.remove(&id);
+    }
+
+    pub(crate) async fn udp_send(&self, stream_id: u32, host: &str, port: u16, data: &[u8]) -> Result<()> {
+        debug!(stream_id, host, port, "udp send");
         let payload = encode_udp_payload(host, port, data);
-        self.send_frame(encode_frame(UDP_STREAM_ID, TYPE_UDP_DATA, &payload))
+        self.send_frame(encode_frame(stream_id, TYPE_UDP_DATA, &payload))
             .await
     }
 }

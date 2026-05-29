@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use protocol::{encode_frame, encode_udp_payload, TYPE_UDP_DATA, UDP_STREAM_ID};
+use protocol::{encode_frame, encode_udp_payload, TYPE_UDP_DATA};
 use std::sync::Arc;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
@@ -18,7 +18,11 @@ pub(crate) async fn bind_socket() -> Option<Arc<UdpSocket>> {
     }
 }
 
-pub(crate) fn spawn_recv_task(sock: Arc<UdpSocket>, frame_tx: mpsc::Sender<Bytes>) {
+pub(crate) fn spawn_recv_task(
+    sock: Arc<UdpSocket>,
+    frame_tx: mpsc::Sender<Bytes>,
+    stream_id: u32,
+) {
     tokio::spawn(async move {
         let mut buf = vec![0u8; 65535];
         loop {
@@ -32,7 +36,7 @@ pub(crate) fn spawn_recv_task(sock: Arc<UdpSocket>, frame_tx: mpsc::Sender<Bytes
             let src_host = src.ip().to_string();
             let src_port = src.port();
             let payload = encode_udp_payload(&src_host, src_port, &buf[..n]);
-            let frame = encode_frame(UDP_STREAM_ID, TYPE_UDP_DATA, &payload);
+            let frame = encode_frame(stream_id, TYPE_UDP_DATA, &payload);
             if frame_tx.send(frame).await.is_err() {
                 break;
             }

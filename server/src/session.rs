@@ -28,12 +28,7 @@ pub(crate) async fn handle_socket(socket: WebSocket) {
     });
 
     let stream_map: Arc<DashMap<u32, mpsc::Sender<Bytes>>> = Arc::new(DashMap::new());
-
-    let udp_sock = match udp::bind_socket().await {
-        Some(s) => s,
-        None => return,
-    };
-    udp::spawn_recv_task(udp_sock.clone(), frame_tx.clone());
+    let udp_sockets: Arc<DashMap<u32, Arc<tokio::net::UdpSocket>>> = Arc::new(DashMap::new());
 
     while let Some(msg) = ws_rx.next().await {
         match msg {
@@ -75,7 +70,21 @@ pub(crate) async fn handle_socket(socket: WebSocket) {
                     TYPE_UDP_DATA => match decode_udp_payload(&payload) {
                         Ok((host, port, data)) => {
                             let target = format!("{host}:{port}");
-                            let sock = udp_sock.clone();
+                            let sock = if let Some(s) = udp_sockets.get(&stream_id) {
+                                s.clone()
+                            } else {
+                                let s = match udp::bind_socket().await {
+                                    Some(s) => s,
+                                    None => return,
+                                };
+                                udp::spawn_recv_task(
+                                    s.clone(),
+                                    frame_tx.clone(),
+                                    stream_id,
+                                );
+                                udp_sockets.insert(stream_id, s.clone());
+                                s
+                            };
                             tokio::spawn(async move {
                                 if let Err(e) = sock.send_to(&data, &target).await {
                                     warn!("[udp] send to {target}: {e}");
@@ -100,5 +109,6 @@ pub(crate) async fn handle_socket(socket: WebSocket) {
     }
 
     stream_map.clear();
+    udp_sockets.clear();
     info!("[ws] session closed");
 }
