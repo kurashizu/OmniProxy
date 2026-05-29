@@ -4,7 +4,7 @@ resolver = "2"
 
 [workspace.package]
 version = "1.0.2-beta.2"
-edition = "2021"
+edition = "2026"
 
 [profile.release]
 opt-level    = "z"
