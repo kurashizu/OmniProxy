@@ -112,6 +112,14 @@ jobs:
 
               shell: powershell
 
+            # ── Smoke test ─────────────────────────────────────────────────────────
+            - name: Smoke test
+              run: |
+                  ./dist/client${{ matrix.ext }} --version
+                  ./dist/server${{ matrix.ext }} --version
+                  ./dist/proxy${{ matrix.ext }} --version
+              shell: bash
+
             # ── Package ──────────────────────────────────────────────────────────────
             - name: Package Linux
               if: startsWith(matrix.os, 'ubuntu')
