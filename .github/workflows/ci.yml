@@ -49,4 +49,4 @@ jobs:
                       target/x86_64-unknown-linux-musl/release/client
                       target/x86_64-unknown-linux-musl/release/server
                       target/x86_64-unknown-linux-musl/release/proxy
-                  retention-days: 7
+                  retention-days: 2
