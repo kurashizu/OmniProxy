@@ -1,3 +1,4 @@
+#[cfg(unix)]
 use tracing::info;
 
 pub fn init() {

@@ -313,14 +313,13 @@ fn bind_to_interface(socket: &tokio::net::TcpSocket, ip: IpAddr) -> Result<()> {
     let idx_be = u32::to_be(idx);
     let raw = socket.as_raw_socket();
     unsafe {
-        setsockopt(
+        let ret = setsockopt(
             SOCKET(raw as usize),
             IPPROTO_IP.0 as i32,
             IP_UNICAST_IF as i32,
             Some(&idx_be.to_ne_bytes()),
-        )
-        .ok()
-        .with_context(|| format!("IP_UNICAST_IF(idx={idx}) failed"))?;
+        );
+        anyhow::ensure!(ret == 0, "IP_UNICAST_IF(idx={idx}) failed: {ret}");
     }
     Ok(())
 }
