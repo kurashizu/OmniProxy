@@ -64,13 +64,9 @@ jobs:
             # ── Build ───────────────────────────────────────────────────────────────
             - name: Build all
               env:
-                  RUSTFLAGS: ${{ format('{0} {1}',
-                      startsWith(matrix.os, 'windows') && '-Ctarget-feature=+crt-static' || '',
-                      '--cfg tokio_unstable') }}
+                  RUSTFLAGS: ${{ startsWith(matrix.os, 'windows') && '-Ctarget-feature=+crt-static' || '' }}
               run: |
-                  cargo build -p client --features console --release --target ${{ matrix.target }}
-                  cargo build -p server --features console --release --target ${{ matrix.target }}
-                  cargo build -p proxy --release --target ${{ matrix.target }}
+                  cargo build -p client -p server -p proxy --release --target ${{ matrix.target }}
                   mkdir -p dist
                   cp target/${{ matrix.target }}/release/client${{ matrix.ext }} dist/
                   cp target/${{ matrix.target }}/release/server${{ matrix.ext }} dist/
