@@ -237,11 +237,11 @@ async fn handle_tcp_via_socks5(
     let (net_r, net_w) = tokio::io::split(netstream);
     let (socks_r, socks_w) = socks.into_split();
 
-    // Wrap in buffered readers/writers with 256KB buffers
-    let mut net_r = tokio::io::BufReader::with_capacity(256 * 1024, net_r);
-    let mut net_w = tokio::io::BufWriter::with_capacity(256 * 1024, net_w);
-    let mut socks_r = tokio::io::BufReader::with_capacity(256 * 1024, socks_r);
-    let mut socks_w = tokio::io::BufWriter::with_capacity(256 * 1024, socks_w);
+    // Wrap in buffered readers/writers with 16KB buffers
+    let mut net_r = tokio::io::BufReader::with_capacity(16 * 1024, net_r);
+    let mut net_w = tokio::io::BufWriter::with_capacity(16 * 1024, net_w);
+    let mut socks_r = tokio::io::BufReader::with_capacity(16 * 1024, socks_r);
+    let mut socks_w = tokio::io::BufWriter::with_capacity(16 * 1024, socks_w);
 
     tokio::select! {
         r = tokio::io::copy(&mut socks_r, &mut net_w) => { r.ok(); }

@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use bytes::Bytes;
-use protocol::{encode_frame, encode_icmp_payload, TYPE_ICMP_DATA};
+use protocol::{encode_frame_bytes, encode_icmp_payload, TYPE_ICMP_DATA};
 use std::net::SocketAddr;
 use std::os::fd::FromRawFd;
 use std::sync::Arc;
@@ -8,9 +8,6 @@ use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
 
-/// Create a raw ICMP socket.
-/// Uses SOCK_RAW so we can receive ICMP echo replies (SOCK_DGRAM only gets errors).
-/// IPv4 and IPv6 are both supported.
 pub(crate) async fn open_raw_icmp(target: &str) -> Result<Arc<UdpSocket>> {
     let addr: SocketAddr = target
         .parse()
@@ -37,10 +34,6 @@ pub(crate) async fn open_raw_icmp(target: &str) -> Result<Arc<UdpSocket>> {
     Ok(Arc::new(UdpSocket::from_std(std_sock)?))
 }
 
-/// Run bidirectional ICMP forwarding for one stream.
-///
-/// - `in_rx`: receives raw ICMP payloads from the mux (client sends)
-/// - `frame_tx`: sends ICMP_DATA frames back to the mux (server replies)
 pub(crate) async fn run(
     stream_id: u32,
     target: String,
@@ -63,7 +56,7 @@ pub(crate) async fn run(
         }
     };
 
-    // recv raw ICMP → encode source IP → send to mux
+    // recv raw ICMP -> encode source IP -> send to mux
     // IPv4 SOCK_RAW: recv includes IP header, must strip it.
     // IPv6 SOCK_RAW: recv does NOT include IPv6 header, only ICMPv6 payload.
     let target_ip = target_addr.ip();
@@ -99,7 +92,7 @@ pub(crate) async fn run(
                     let src_ip = src.ip().to_string();
                     let icmp_data = &buf[header_len..n];
                     let payload = encode_icmp_payload(&src_ip, icmp_data);
-                    let frame = encode_frame(stream_id, TYPE_ICMP_DATA, &payload);
+                    let frame = encode_frame_bytes(stream_id, TYPE_ICMP_DATA, payload);
                     if recv_tx.send(frame).await.is_err() {
                         break;
                     }
@@ -112,14 +105,13 @@ pub(crate) async fn run(
         }
     });
 
-    // mux → raw ICMP send
-    // Raw ICMP send: data is ICMP header + payload (kernel adds IP header)
+    // mux -> raw ICMP send
     let send_task = tokio::spawn(async move {
         while let Some(data) = in_rx.recv().await {
             if let Err(e) = sock.send_to(&data, &target_addr).await {
                 warn!("[icmp] send to {target_addr}: {e}");
             } else {
-                debug!("[ICMP→] {target_addr} {}B", data.len());
+                debug!("[ICMP->] {target_addr} {}B", data.len());
             }
         }
     });

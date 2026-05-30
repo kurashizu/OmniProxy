@@ -11,8 +11,9 @@ use tracing::{debug, info, warn};
 use crate::config::Config;
 use crate::ws::build_ws;
 use protocol::{
-    decode_frame, decode_icmp_payload, decode_udp_payload, encode_frame, encode_udp_payload,
-    TYPE_ICMP_DATA, TYPE_TCP_CONNECT, TYPE_TCP_CONNECTED, TYPE_TCP_DATA, TYPE_TCP_FIN, TYPE_UDP_DATA,
+    decode_frame, decode_icmp_payload, decode_udp_payload, encode_frame, encode_frame_bytes,
+    encode_udp_payload, TYPE_ICMP_DATA, TYPE_TCP_CONNECT, TYPE_TCP_CONNECTED, TYPE_TCP_DATA,
+    TYPE_TCP_FIN, TYPE_UDP_DATA,
 };
 
 pub(crate) struct MuxInner {
@@ -134,7 +135,7 @@ impl Mux {
         loop {
             match ws_rx.next().await {
                 Some(Ok(Message::Binary(data))) => {
-                    let (id, typ, payload) = match decode_frame(&data) {
+                    let (id, typ, payload) = match decode_frame(data) {
                         Ok(v) => v,
                         Err(e) => {
                             warn!(error = %e, "decode error");
@@ -234,7 +235,7 @@ impl Mux {
     }
 
     pub(crate) async fn tcp_data(&self, id: u32, data: bytes::Bytes) -> Result<()> {
-        self.send_frame(encode_frame(id, TYPE_TCP_DATA, &data))
+        self.send_frame(encode_frame_bytes(id, TYPE_TCP_DATA, data))
             .await
     }
 
@@ -260,7 +261,7 @@ impl Mux {
     pub(crate) async fn udp_send(&self, stream_id: u32, host: &str, port: u16, data: &[u8]) -> Result<()> {
         debug!(stream_id, host, port, "udp send");
         let payload = encode_udp_payload(host, port, data);
-        self.send_frame(encode_frame(stream_id, TYPE_UDP_DATA, &payload))
+        self.send_frame(encode_frame_bytes(stream_id, TYPE_UDP_DATA, payload))
             .await
     }
 
@@ -297,26 +298,25 @@ impl Mux {
 
 fn spawn_reconnect_loop(mux: Arc<Mux>, mut disc_rx: oneshot::Receiver<()>) {
     tokio::spawn(async move {
-        let mut retry = 0u8;
+        let mut delay = Duration::from_secs(1);
+        let max_delay = Duration::from_secs(30);
         loop {
             let _ = disc_rx.await;
-            if retry >= 5 {
-                warn!("reconnect limit reached, stop retrying");
-                break;
-            }
-            retry += 1;
-            info!("disconnected, reconnecting in 3s...");
-            tokio::time::sleep(Duration::from_secs(3)).await;
+            info!("disconnected, reconnecting in {}s...", delay.as_secs());
+            tokio::time::sleep(delay).await;
+            delay = (delay * 2).min(max_delay);
             loop {
                 match mux.connect().await {
                     Ok(new_disc) => {
                         info!("reconnected");
                         disc_rx = new_disc;
+                        delay = Duration::from_secs(1);
                         break;
                     }
                     Err(e) => {
-                        warn!(error = %e, "reconnect failed, retry in 5s");
-                        tokio::time::sleep(Duration::from_secs(5)).await;
+                        warn!(error = %e, "reconnect failed, retry in {}s", delay.as_secs());
+                        tokio::time::sleep(delay).await;
+                        delay = (delay * 2).min(max_delay);
                     }
                 }
             }

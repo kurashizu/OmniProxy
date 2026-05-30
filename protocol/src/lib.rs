@@ -16,13 +16,21 @@ pub fn encode_frame(stream_id: u32, typ: u8, payload: &[u8]) -> Bytes {
     buf.freeze()
 }
 
-pub fn decode_frame(data: &[u8]) -> Result<(u32, u8, Bytes)> {
+pub fn encode_frame_bytes(stream_id: u32, typ: u8, payload: Bytes) -> Bytes {
+    let mut buf = BytesMut::with_capacity(5 + payload.len());
+    buf.put_u32(stream_id);
+    buf.put_u8(typ);
+    buf.put_slice(&payload);
+    buf.freeze()
+}
+
+pub fn decode_frame(data: Bytes) -> Result<(u32, u8, Bytes)> {
     if data.len() < 5 {
         anyhow::bail!("frame too short: {}B", data.len());
     }
     let stream_id = u32::from_be_bytes([data[0], data[1], data[2], data[3]]);
     let typ = data[4];
-    let payload = Bytes::copy_from_slice(&data[5..]);
+    let payload = data.slice(5..);
     Ok((stream_id, typ, payload))
 }
 
@@ -36,7 +44,7 @@ pub fn encode_udp_payload(host: &str, port: u16, data: &[u8]) -> Bytes {
     buf.freeze()
 }
 
-pub fn decode_udp_payload(payload: &[u8]) -> Result<(String, u16, Bytes)> {
+pub fn decode_udp_payload(payload: &Bytes) -> Result<(String, u16, Bytes)> {
     if payload.len() < 4 {
         anyhow::bail!("udp payload too short");
     }
@@ -44,9 +52,10 @@ pub fn decode_udp_payload(payload: &[u8]) -> Result<(String, u16, Bytes)> {
     if payload.len() < 2 + hl + 2 {
         anyhow::bail!("udp payload truncated");
     }
-    let host = String::from_utf8_lossy(&payload[2..2 + hl]).to_string();
+    let host = String::from_utf8(payload[2..2 + hl].to_vec())
+        .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned());
     let port = u16::from_be_bytes([payload[2 + hl], payload[3 + hl]]);
-    let data = Bytes::copy_from_slice(&payload[4 + hl..]);
+    let data = payload.slice(4 + hl..);
     Ok((host, port, data))
 }
 
@@ -67,7 +76,8 @@ pub fn decode_icmp_payload(payload: &[u8]) -> Result<(String, Bytes)> {
     if payload.len() < 2 + il {
         anyhow::bail!("icmp payload truncated");
     }
-    let ip = String::from_utf8_lossy(&payload[2..2 + il]).to_string();
+    let ip = String::from_utf8(payload[2..2 + il].to_vec())
+        .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned());
     let data = Bytes::copy_from_slice(&payload[2 + il..]);
     Ok((ip, data))
 }

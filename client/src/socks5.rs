@@ -2,9 +2,9 @@ use anyhow::{bail, Result};
 use protocol::encode_icmp_payload;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::sync::Arc;
+use std::sync::OnceLock;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpStream, UdpSocket};
-use tokio::sync::Mutex;
 use tracing::{debug, warn};
 
 use crate::mux::Mux;
@@ -258,7 +258,7 @@ async fn handle_udp(mut stream: TcpStream, mux: Arc<Mux>) -> Result<()> {
     write_socks5_reply(&mut stream, REP_SUCCESS, &local_addr).await?;
 
     let (stream_id, mut udp_rx) = mux.register_udp().await;
-    let client_addr: Arc<Mutex<Option<SocketAddr>>> = Arc::new(Mutex::new(None));
+    let client_addr: Arc<OnceLock<SocketAddr>> = Arc::new(OnceLock::new());
 
     let udp_recv = udp.clone();
     let mux_up = mux.clone();
@@ -268,12 +268,7 @@ async fn handle_udp(mut stream: TcpStream, mux: Arc<Mux>) -> Result<()> {
         let mut buf = vec![0u8; 65535];
         loop {
             let (n, src) = udp_recv.recv_from(&mut buf).await?;
-            {
-                let mut a = ca_up.lock().await;
-                if a.is_none() {
-                    *a = Some(src);
-                }
-            }
+            ca_up.get_or_init(|| src);
             let (host, port, data_offset) = match parse_socks5_udp_header(&buf[..n]) {
                 Ok(v) => v,
                 Err(e) => {
@@ -293,7 +288,7 @@ async fn handle_udp(mut stream: TcpStream, mux: Arc<Mux>) -> Result<()> {
     let mux_to_local = async move {
         while let Some((src_host, src_port, data)) = udp_rx.recv().await {
             let resp = build_socks5_udp_response(&src_host, src_port, &data);
-            if let Some(a) = *ca_down.lock().await {
+            if let Some(a) = ca_down.get() {
                 udp_send.send_to(&resp, a).await.ok();
             }
         }

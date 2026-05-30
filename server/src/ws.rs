@@ -8,6 +8,17 @@ use tracing::warn;
 use crate::config::AppState;
 use crate::session::handle_socket;
 
+fn constant_time_eq(a: &str, b: &str) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.as_bytes()
+        .iter()
+        .zip(b.as_bytes())
+        .fold(0u8, |acc, (x, y)| acc | (x ^ y))
+        == 0
+}
+
 pub(crate) async fn handler(
     ws: WebSocketUpgrade,
     State(state): State<AppState>,
@@ -18,7 +29,7 @@ pub(crate) async fn handler(
             .get("x-proxy-token")
             .and_then(|v| v.to_str().ok())
             .unwrap_or("");
-        if provided != state.cfg.token {
+        if !constant_time_eq(provided, &state.cfg.token) {
             warn!("[auth] rejected");
             return (StatusCode::UNAUTHORIZED, "Unauthorized").into_response();
         }

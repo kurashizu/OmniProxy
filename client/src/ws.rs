@@ -11,10 +11,11 @@ use tracing::info;
 
 use crate::config::Config;
 
-// DNS cache: host → resolved IP. Once populated, DNS queries are skipped.
-static DNS_CACHE: OnceLock<RwLock<HashMap<String, IpAddr>>> = OnceLock::new();
+// DNS cache: host → (resolved IP, insertion time). Entries expire after TTL.
+static DNS_CACHE: OnceLock<RwLock<HashMap<String, (IpAddr, std::time::Instant)>>> = OnceLock::new();
+const DNS_TTL: std::time::Duration = std::time::Duration::from_secs(300); // 5 minutes
 
-fn dns_cache() -> &'static RwLock<HashMap<String, IpAddr>> {
+fn dns_cache() -> &'static RwLock<HashMap<String, (IpAddr, std::time::Instant)>> {
     DNS_CACHE.get_or_init(|| RwLock::new(HashMap::new()))
 }
 
@@ -159,15 +160,21 @@ impl WsConn {
         }
     }
 
-    /// Resolve host to SocketAddr. Caches result so subsequent calls skip DNS entirely.
+    /// Resolve host to SocketAddr. Caches result with TTL so stale entries are refreshed.
     async fn resolve_remote_addr(host: &str, port: u16, outbound_ip: IpAddr) -> Result<SocketAddr> {
-        // Cache hit — no DNS query at all.
-        if let Some(cached) = dns_cache().read().ok().and_then(|c| c.get(host).copied()) {
-            info!(host, ip = %cached, "dns cache hit");
-            return Ok(SocketAddr::new(cached, port));
+        // Cache hit — check TTL.
+        {
+            let cache = dns_cache().read().ok();
+            if let Some(cache) = cache
+                && let Some((ip, inserted)) = cache.get(host)
+                && inserted.elapsed() < DNS_TTL
+            {
+                info!(host, ip = %ip, "dns cache hit");
+                return Ok(SocketAddr::new(*ip, port));
+            }
         }
 
-        // Cache miss — platform-specific DNS query.
+        // Cache miss or expired — platform-specific DNS query.
         let addrs = tokio::net::lookup_host((host, port))
             .await
             .with_context(|| format!("dns lookup failed: {host}"))?;
@@ -182,7 +189,7 @@ impl WsConn {
 
         // Cache for next time.
         if let Ok(mut cache) = dns_cache().write() {
-            cache.insert(host.to_string(), matched.ip());
+            cache.insert(host.to_string(), (matched.ip(), std::time::Instant::now()));
             info!(host, ip = %matched.ip(), "dns cached");
         }
 
