@@ -19,6 +19,10 @@ impl DashboardApp {
         )
     }
 
+    pub(crate) fn set_error(&mut self, msg: impl Into<String>) {
+        self.error_msg = Some((msg.into(), web_time::Instant::now()));
+    }
+
     pub(crate) fn top_bar(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::top("top_bar")
             .resizable(false)
@@ -56,6 +60,7 @@ impl DashboardApp {
                                 if let Some(mut h) = self.proxy_handle.take() {
                                     h.stop();
                                 }
+                                self.ws_connected = false;
                             }
                         } else {
                             self.proxy_handle = None;
@@ -70,13 +75,39 @@ impl DashboardApp {
                     });
                 });
             });
+
+        self.show_error_banner(ctx);
+    }
+
+    fn show_error_banner(&mut self, ctx: &egui::Context) {
+        if let Some((ref msg, t)) = self.error_msg {
+            if t.elapsed().as_secs() > 8 {
+                self.error_msg = None;
+                return;
+            }
+            let msg = msg.clone();
+            egui::TopBottomPanel::top("error_banner")
+                .resizable(false)
+                .show(ctx, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new(format!("⚠ {}", msg))
+                                .size(13.0)
+                                .color(egui::Color32::from_rgb(255, 100, 100)),
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.small_button("✕").clicked() {
+                                self.error_msg = None;
+                            }
+                        });
+                    });
+                });
+        }
     }
 
     #[cfg(not(target_arch = "wasm32"))]
     fn start_proxy(&mut self) {
-        let proxy_bin = self.exe_dir.join(
-            if cfg!(windows) { "proxy.exe" } else { "proxy" }
-        );
+        let proxy_bin = self.exe_dir.join(&self.config.proxy);
         let config_path = if self.config_path.is_empty() {
             self.exe_dir.join("config.yml")
         } else {
@@ -84,7 +115,7 @@ impl DashboardApp {
         };
 
         if !proxy_bin.exists() {
-            log::error!("proxy binary not found: {}", proxy_bin.display());
+            self.set_error(format!("proxy binary not found: {}", proxy_bin.display()));
             return;
         }
 
@@ -106,7 +137,7 @@ impl DashboardApp {
                 self.proxy_handle = Some(h);
             }
             None => {
-                log::error!("failed to start proxy (need sudo/admin?)");
+                self.set_error("failed to start proxy (need sudo/admin?)");
             }
         }
     }

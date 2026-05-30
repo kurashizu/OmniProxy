@@ -3,6 +3,9 @@ use serde::{Deserialize, Serialize};
 pub(crate) fn default_client() -> String {
     if cfg!(target_os = "windows") { ".\\client.exe".into() } else { "./client".into() }
 }
+pub(crate) fn default_proxy() -> String {
+    if cfg!(target_os = "windows") { ".\\proxy.exe".into() } else { "./proxy".into() }
+}
 pub(crate) fn default_socks_addr() -> String { "127.0.0.1".into() }
 pub(crate) fn default_socks_port() -> u16 { 1080 }
 pub(crate) fn default_admin_port() -> u16 { 10991 }
@@ -20,6 +23,8 @@ pub(crate) fn default_tun_gw6() -> String { "fd00::2".into() }
 pub(crate) struct GuiConfig {
     #[serde(default = "default_client")]
     pub client: String,
+    #[serde(default = "default_proxy")]
+    pub proxy: String,
     #[serde(default)]
     pub server: String,
     #[serde(default)]
@@ -52,6 +57,7 @@ impl Default for GuiConfig {
     fn default() -> Self {
         Self {
             client: default_client(),
+            proxy: default_proxy(),
             server: String::new(),
             token: String::new(),
             socks_addr: default_socks_addr(),

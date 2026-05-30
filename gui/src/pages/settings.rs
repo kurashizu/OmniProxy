@@ -119,6 +119,7 @@ impl DashboardApp {
             ui.heading("Advanced Settings");
             ui.add_space(4.0);
             dirty |= kv_edit(ui, "Client Path :", &mut self.config.client);
+            dirty |= kv_edit(ui, "Proxy Path :", &mut self.config.proxy);
             dirty |= kv_edit(ui, "SOCKS Address :", &mut self.config.socks_addr);
             dirty |= kv_edit_u16(ui, "SOCKS Port :", &mut self.config.socks_port);
             dirty |= kv_edit_u16(ui, "Admin Port :", &mut self.config.admin_port);

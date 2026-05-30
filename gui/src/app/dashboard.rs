@@ -41,6 +41,7 @@ pub(crate) struct DashboardApp {
     pub(crate) show_token: bool,
     pub(crate) exe_dir: std::path::PathBuf,
     pub(crate) proxy_handle: Option<crate::native::ProxyHandle>,
+    pub(crate) error_msg: Option<(String, web_time::Instant)>,
 
     pub(crate) last_poll: web_time::Instant,
 }

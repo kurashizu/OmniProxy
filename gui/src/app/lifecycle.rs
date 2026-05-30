@@ -1,12 +1,18 @@
 use crate::app::DashboardApp;
-use crate::config::GuiConfig;
 use crate::pages::Page;
 
 impl DashboardApp {
     pub(crate) fn new(cc: &eframe::CreationContext<'_>) -> Self {
         cc.egui_ctx.set_pixels_per_point(1.0);
 
-        let config = GuiConfig::default();
+        let exe_dir = crate::paths::base_dir();
+
+        let config_path = exe_dir.join("config.yml");
+        let config = std::fs::read_to_string(&config_path)
+            .ok()
+            .and_then(|s| serde_yaml::from_str(&s).ok())
+            .unwrap_or_default();
+
         Self {
             current_page: Page::Overview,
             tun_name: String::new(),
@@ -36,11 +42,10 @@ impl DashboardApp {
             config_path: String::new(),
             config,
             show_token: false,
-            exe_dir: std::env::current_exe().ok()
-                .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-                .unwrap_or_else(|| std::path::PathBuf::from(".")),
+            exe_dir,
             last_poll: web_time::Instant::now(),
             proxy_handle: None,
+            error_msg: None,
         }
     }
 }

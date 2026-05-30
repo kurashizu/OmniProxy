@@ -8,19 +8,33 @@ mod app;
 mod config;
 mod native;
 mod pages;
+mod paths;
 mod widgets;
 
 fn main() {
     #[cfg(not(target_arch = "wasm32"))]
-    eframe::run_native(
-        "OmniProxy",
-        eframe::NativeOptions {
-            viewport: egui::ViewportBuilder::default().with_inner_size([800.0, 500.0]),
+    {
+        let wgpu_options = eframe::egui_wgpu::WgpuConfiguration {
+            #[cfg(target_os = "windows")]
+            supported_backends: eframe::wgpu::Backends::DX12,
+            #[cfg(not(target_os = "windows"))]
+            supported_backends: eframe::wgpu::Backends::all(),
+            present_mode: eframe::wgpu::PresentMode::AutoVsync,
             ..Default::default()
-        },
-        Box::new(|cc| Ok(Box::new(app::DashboardApp::new(cc)))),
-    )
-    .expect("failed to start eframe");
+        };
+
+        eframe::run_native(
+            "OmniProxy",
+            eframe::NativeOptions {
+                viewport: egui::ViewportBuilder::default().with_inner_size([800.0, 500.0]),
+                renderer: eframe::Renderer::Wgpu,
+                wgpu_options,
+                ..Default::default()
+            },
+            Box::new(|cc| Ok(Box::new(app::DashboardApp::new(cc)))),
+        )
+        .expect("failed to start eframe");
+    }
 
     #[cfg(target_arch = "wasm32")]
     {
