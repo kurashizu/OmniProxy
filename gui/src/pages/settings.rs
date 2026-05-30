@@ -1,5 +1,5 @@
-use eframe::egui;
 use crate::app::DashboardApp;
+use eframe::egui;
 
 fn kv_edit(ui: &mut egui::Ui, label: &str, value: &mut String) -> bool {
     let mut changed = false;
@@ -7,10 +7,12 @@ fn kv_edit(ui: &mut egui::Ui, label: &str, value: &mut String) -> bool {
     ui.horizontal(|ui| {
         ui.add(egui::Label::new(label).sense(egui::Sense::hover()));
         ui.add_space(ui.available_width() - half);
-        changed = ui.add_sized(
-            egui::vec2(half - 24.0, 20.0),
-            egui::TextEdit::singleline(value),
-        ).changed();
+        changed = ui
+            .add_sized(
+                egui::vec2(half - 24.0, 20.0),
+                egui::TextEdit::singleline(value),
+            )
+            .changed();
     });
     ui.add_space(4.0);
     changed
@@ -23,14 +25,16 @@ fn kv_edit_u16(ui: &mut egui::Ui, label: &str, value: &mut u16) -> bool {
     ui.horizontal(|ui| {
         ui.add(egui::Label::new(label).sense(egui::Sense::hover()));
         ui.add_space(ui.available_width() - half);
-        if ui.add_sized(
-            egui::vec2(half - 24.0, 20.0),
-            egui::TextEdit::singleline(&mut buf),
-        ).changed() {
-            if let Ok(n) = buf.parse::<u16>() {
-                *value = n;
-                changed = true;
-            }
+        if ui
+            .add_sized(
+                egui::vec2(half - 24.0, 20.0),
+                egui::TextEdit::singleline(&mut buf),
+            )
+            .changed()
+            && let Ok(n) = buf.parse::<u16>()
+        {
+            *value = n;
+            changed = true;
         }
     });
     ui.add_space(4.0);
@@ -44,14 +48,16 @@ fn kv_edit_u8(ui: &mut egui::Ui, label: &str, value: &mut u8) -> bool {
     ui.horizontal(|ui| {
         ui.add(egui::Label::new(label).sense(egui::Sense::hover()));
         ui.add_space(ui.available_width() - half);
-        if ui.add_sized(
-            egui::vec2(half - 24.0, 20.0),
-            egui::TextEdit::singleline(&mut buf),
-        ).changed() {
-            if let Ok(n) = buf.parse::<u8>() {
-                *value = n;
-                changed = true;
-            }
+        if ui
+            .add_sized(
+                egui::vec2(half - 24.0, 20.0),
+                egui::TextEdit::singleline(&mut buf),
+            )
+            .changed()
+            && let Ok(n) = buf.parse::<u8>()
+        {
+            *value = n;
+            changed = true;
         }
     });
     ui.add_space(4.0);
@@ -65,10 +71,13 @@ fn kv_edit_opt(ui: &mut egui::Ui, label: &str, value: &mut Option<String>) -> bo
     ui.horizontal(|ui| {
         ui.add(egui::Label::new(label).sense(egui::Sense::hover()));
         ui.add_space(ui.available_width() - half);
-        if ui.add_sized(
-            egui::vec2(half - 24.0, 20.0),
-            egui::TextEdit::singleline(&mut buf),
-        ).changed() {
+        if ui
+            .add_sized(
+                egui::vec2(half - 24.0, 20.0),
+                egui::TextEdit::singleline(&mut buf),
+            )
+            .changed()
+        {
             *value = if buf.is_empty() { None } else { Some(buf) };
             changed = true;
         }
@@ -105,7 +114,13 @@ impl DashboardApp {
                 };
                 dirty |= ui.add_sized(egui::vec2(input_w, 20.0), te).changed();
                 ui.add_space(gap);
-                if ui.add_sized(egui::vec2(btn_w, 20.0), egui::Button::new(if self.show_token { "Hide" } else { "Show" })).clicked() {
+                if ui
+                    .add_sized(
+                        egui::vec2(btn_w, 20.0),
+                        egui::Button::new(if self.show_token { "Hide" } else { "Show" }),
+                    )
+                    .clicked()
+                {
                     self.show_token = !self.show_token;
                 }
             });
@@ -126,7 +141,11 @@ impl DashboardApp {
             dirty |= kv_edit(ui, "TUN IPv6 :", &mut self.config.tun_ip6);
             dirty |= kv_edit_u8(ui, "TUN Prefix6 :", &mut self.config.tun_prefix6);
             dirty |= kv_edit(ui, "TUN Gateway6 :", &mut self.config.tun_gw6);
-            dirty |= kv_edit_opt(ui, "Socks Outbound IP :", &mut self.config.socks_outbound_ip);
+            dirty |= kv_edit_opt(
+                ui,
+                "Socks Outbound IP :",
+                &mut self.config.socks_outbound_ip,
+            );
             ui.add_space(4.0);
 
             ui.separator();
@@ -142,7 +161,10 @@ impl DashboardApp {
             ui.horizontal(|ui| {
                 ui.add(egui::Label::new("GitHub :").sense(egui::Sense::hover()));
                 ui.add_space(ui.available_width() - half);
-                ui.hyperlink_to("github.com/kurashizu/OmniProxy", "https://github.com/kurashizu/OmniProxy");
+                ui.hyperlink_to(
+                    "github.com/kurashizu/OmniProxy",
+                    "https://github.com/kurashizu/OmniProxy",
+                );
             });
             ui.add_space(4.0);
             ui.horizontal(|ui| {

@@ -1,4 +1,4 @@
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use protocol::encode_icmp_payload;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::sync::Arc;
@@ -64,9 +64,7 @@ async fn read_socks5_handshake(stream: &mut TcpStream) -> Result<()> {
     }
 
     // Server selection
-    stream
-        .write_all(&[SOCKS5_VERSION, METHOD_NO_AUTH])
-        .await?;
+    stream.write_all(&[SOCKS5_VERSION, METHOD_NO_AUTH]).await?;
     Ok(())
 }
 
@@ -125,11 +123,7 @@ async fn read_address(stream: &mut TcpStream, atyp: u8) -> Result<TargetAddr> {
     }
 }
 
-async fn write_socks5_reply(
-    stream: &mut TcpStream,
-    rep: u8,
-    bind_addr: &SocketAddr,
-) -> Result<()> {
+async fn write_socks5_reply(stream: &mut TcpStream, rep: u8, bind_addr: &SocketAddr) -> Result<()> {
     let mut resp = vec![SOCKS5_VERSION, rep, 0x00]; // VER, REP, RSV
     match bind_addr {
         SocketAddr::V4(addr) => {
@@ -176,11 +170,7 @@ pub async fn handle(mut stream: TcpStream, mux: Arc<Mux>) -> Result<()> {
 
 // ── TCP CONNECT ───────────────────────────────────────────────────────────────
 
-async fn handle_tcp(
-    mut stream: TcpStream,
-    target_addr: TargetAddr,
-    mux: Arc<Mux>,
-) -> Result<()> {
+async fn handle_tcp(mut stream: TcpStream, target_addr: TargetAddr, mux: Arc<Mux>) -> Result<()> {
     let target = target_to_string(&target_addr);
     debug!(target, "socks5 tcp connect");
 
@@ -276,7 +266,9 @@ async fn handle_udp(mut stream: TcpStream, mux: Arc<Mux>) -> Result<()> {
                     continue;
                 }
             };
-            mux_up.udp_send(stream_id, &host, port, &buf[data_offset..n]).await?;
+            mux_up
+                .udp_send(stream_id, &host, port, &buf[data_offset..n])
+                .await?;
         }
         #[allow(unreachable_code)]
         anyhow::Ok(())
@@ -313,11 +305,7 @@ async fn handle_udp(mut stream: TcpStream, mux: Arc<Mux>) -> Result<()> {
 
 // ── ICMP ──────────────────────────────────────────────────────────────────────
 
-async fn handle_icmp(
-    mut stream: TcpStream,
-    target_addr: TargetAddr,
-    mux: Arc<Mux>,
-) -> Result<()> {
+async fn handle_icmp(mut stream: TcpStream, target_addr: TargetAddr, mux: Arc<Mux>) -> Result<()> {
     let target = target_to_string(&target_addr);
     debug!(target, "socks5 icmp");
 

@@ -6,8 +6,8 @@ use crate::forwarder;
 use crate::forwarder::Forwarder;
 use anyhow::{Context, Result};
 use std::net::IpAddr;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use tokio::net::TcpStream;
 use tokio::process::{Child, Command};
 use tokio::time::Duration;
@@ -59,7 +59,11 @@ async fn wait_for_socks(port: u16, deadline: Duration) -> Result<()> {
     );
 }
 
-pub async fn run_stack(cfg: Arc<Config>, outbound_ip: IpAddr, stats: Arc<ProxyStats>) -> Result<()> {
+pub async fn run_stack(
+    cfg: Arc<Config>,
+    outbound_ip: IpAddr,
+    stats: Arc<ProxyStats>,
+) -> Result<()> {
     info!("[stack] outbound IP: {}", outbound_ip);
 
     info!("[stack] spawning client");
@@ -71,6 +75,8 @@ pub async fn run_stack(cfg: Arc<Config>, outbound_ip: IpAddr, stats: Arc<ProxySt
     ];
     client_args.push("--outbound-ip".to_string());
     client_args.push(outbound_ip.to_string());
+    client_args.push("--admin-port".to_string());
+    client_args.push(cfg.admin_port.saturating_sub(1).to_string());
     client_args.extend(["--token".to_string(), cfg.token.clone()]);
     let mut client = spawn(&cfg.client, &client_args, "client").context("spawn client")?;
     let pid = client.id().unwrap_or(0);
@@ -87,37 +93,73 @@ pub async fn run_stack(cfg: Arc<Config>, outbound_ip: IpAddr, stats: Arc<ProxySt
         .await
         .context("wait for SOCKS5 ready")?;
 
-    info!("[stack] creating TUN device and configuring routes");
-    let tun_dev = forwarder::tun_up(&cfg).context("tun_up")?;
+    // Inner restart loop: forwarder is restarted on non-critical exits.
+    // Critical TUN↔stack errors break out to the caller (run_loop handles full restart).
+    let max_restarts = 10u32;
+    let mut restarts = 0u32;
 
-    let routes = vec![
-        crate::admin::RouteEntry {
-            destination: "0.0.0.0/0".into(),
-            gateway: cfg.tun_gw.clone(),
-            interface: cfg.tun_name.clone(),
-        },
-        crate::admin::RouteEntry {
-            destination: "::/0".into(),
-            gateway: cfg.tun_gw6.clone(),
-            interface: cfg.tun_name.clone(),
-        },
-    ];
-    *stats.routes.write().await = routes;
+    loop {
+        info!("[stack] creating TUN device and configuring routes");
+        let tun_dev = forwarder::tun_up(&cfg).context("tun_up")?;
 
-    info!("[stack] creating forwarder");
-    let mut fwd = Forwarder::new(tun_dev, cfg.socks_port).context("create forwarder")?;
+        let routes = vec![
+            crate::admin::RouteEntry {
+                destination: "0.0.0.0/0".into(),
+                gateway: cfg.tun_gw.clone(),
+                interface: cfg.tun_name.clone(),
+            },
+            crate::admin::RouteEntry {
+                destination: "::/0".into(),
+                gateway: cfg.tun_gw6.clone(),
+                interface: cfg.tun_name.clone(),
+            },
+        ];
+        *stats.routes.write().await = routes;
 
-    info!("[stack] proxy running");
-    tokio::select! {
-        s = fwd.run() => { warn!("[stack] forwarder exited: {:?}", s); }
-        s = client.wait() => { warn!("[stack] client exited: {:?}", s); }
-    };
+        info!("[stack] creating forwarder");
+        let mut fwd = Forwarder::new(tun_dev, cfg.socks_port).context("create forwarder")?;
+
+        info!("[stack] proxy running");
+        let fwd_result = tokio::select! {
+            s = fwd.run() => { s }
+            s = client.wait() => {
+                warn!("[stack] client exited: {:?}", s);
+                fwd.shutdown();
+                forwarder::tun_down(&cfg);
+                break;
+            }
+        };
+
+        fwd.shutdown();
+        forwarder::tun_down(&cfg);
+
+        match fwd_result {
+            Ok(()) => {
+                // Subtask exit (non-critical) — restart forwarder
+                restarts += 1;
+                if restarts >= max_restarts {
+                    anyhow::bail!(
+                        "[stack] forwarder restarted {} times, giving up",
+                        max_restarts
+                    );
+                }
+                warn!(
+                    "[stack] forwarder exited (restart {}/{})",
+                    restarts, max_restarts
+                );
+                tokio::time::sleep(Duration::from_secs(2)).await;
+                continue;
+            }
+            Err(e) => {
+                // Critical error — propagate to caller
+                anyhow::bail!("[stack] forwarder critical error: {e}");
+            }
+        }
+    }
 
     info!("[stack] tearing down");
-    fwd.shutdown();
     stats.client_alive.store(false, Ordering::Relaxed);
     kill_quiet(&mut client).await;
-    forwarder::tun_down(&cfg);
     info!("[stack] teardown complete");
 
     Ok(())

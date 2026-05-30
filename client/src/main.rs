@@ -19,7 +19,8 @@ async fn main() -> Result<()> {
     let cfg = Config::load()?;
 
     let bind = format!("{}:{}", cfg.addr, cfg.port);
-    let listener = TcpListener::bind(&bind).await
+    let listener = TcpListener::bind(&bind)
+        .await
         .with_context(|| format!("failed to bind SOCKS5 on {bind}"))?;
     info!("SOCKS5 listening on {bind}");
 

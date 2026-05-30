@@ -1,7 +1,7 @@
 // Forwarder: netstack-smoltcp based TUN-to-SOCKS5 transparent proxy.
 
-pub mod tun_device;
 mod icmp;
+pub mod tun_device;
 mod udp;
 
 use anyhow::{Context, Result};
@@ -96,8 +96,7 @@ impl Forwarder {
         });
 
         // ICMP handler (intercepts ICMP from TUN before netstack)
-        let (icmp_handler, icmp_outbound_tx) =
-            icmp::IcmpHandler::new(self.socks_port, icmp_tun_tx);
+        let (icmp_handler, icmp_outbound_tx) = icmp::IcmpHandler::new(self.socks_port, icmp_tun_tx);
 
         // TUN -> demux (ICMP vs TCP/UDP)
         let tun_to_stack = tokio::spawn(async move {
@@ -105,11 +104,12 @@ impl Forwarder {
                 match pkt {
                     Ok(p) => {
                         // ICMP demux: check IP protocol before sending to netstack
-                        let is_icmp = !p.is_empty() && match (p[0] >> 4) & 0x0F {
-                            4 if p.len() > 9 => p[9] == 1,
-                            6 if p.len() > 6 => p[6] == 58,
-                            _ => false,
-                        };
+                        let is_icmp = !p.is_empty()
+                            && match (p[0] >> 4) & 0x0F {
+                                4 if p.len() > 9 => p[9] == 1,
+                                6 if p.len() > 6 => p[6] == 58,
+                                _ => false,
+                            };
 
                         if is_icmp {
                             if icmp_outbound_tx.send(p.to_vec()).await.is_err() {
@@ -155,7 +155,7 @@ impl Forwarder {
             }
         });
 
-        // Handle TCP connections
+        // Handle TCP connections (infinite accept loop — only exits on listener close)
         let socks_port = self.socks_port;
         let mut tcp_listener = self
             .tcp_listener
@@ -170,6 +170,7 @@ impl Forwarder {
                     }
                 });
             }
+            warn!("[forwarder] tcp listener closed");
         });
 
         // Handle UDP
@@ -193,7 +194,7 @@ impl Forwarder {
             _ = tun_writer    => warn!("[forwarder] tun writer died"),
         }
 
-        anyhow::bail!("[forwarder] exited")
+        Ok(())
     }
 
     pub fn shutdown(self) {

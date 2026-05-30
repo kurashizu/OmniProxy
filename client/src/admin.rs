@@ -1,5 +1,5 @@
+use axum::{Json, Router, routing::get};
 use std::sync::Arc;
-use axum::{Router, routing::get, Json};
 
 use crate::mux::Mux;
 
@@ -21,7 +21,9 @@ pub(crate) async fn serve(mux: Arc<Mux>, port: u16) {
     axum::serve(listener, app).await.ok();
 }
 
-async fn health(axum::extract::State(mux): axum::extract::State<Arc<Mux>>) -> Json<serde_json::Value> {
+async fn health(
+    axum::extract::State(mux): axum::extract::State<Arc<Mux>>,
+) -> Json<serde_json::Value> {
     let s = mux.stats();
     Json(serde_json::json!({
         "status": "ok",
@@ -29,7 +31,9 @@ async fn health(axum::extract::State(mux): axum::extract::State<Arc<Mux>>) -> Js
     }))
 }
 
-async fn stats_handler(axum::extract::State(mux): axum::extract::State<Arc<Mux>>) -> Json<serde_json::Value> {
+async fn stats_handler(
+    axum::extract::State(mux): axum::extract::State<Arc<Mux>>,
+) -> Json<serde_json::Value> {
     use std::sync::atomic::Ordering;
     let s = mux.stats();
     let inner = mux.inner().read().await;

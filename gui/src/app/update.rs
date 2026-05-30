@@ -1,5 +1,5 @@
-use eframe::egui;
 use crate::app::DashboardApp;
+use eframe::egui;
 
 impl eframe::App for DashboardApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
@@ -14,13 +14,19 @@ impl DashboardApp {
             self.apply_poll_result(result);
         }
 
+        // Non-blocking: drain stderr from proxy into log lines
+        self.drain_stderr();
+
         // Debounced config save (500ms after last change)
-        if let Some(t) = self.dirty_at {
-            if t.elapsed().as_millis() > 500 && self.dirty {
-                self.save_config();
-                self.dirty = false;
-                self.dirty_at = None;
-            }
+        if let Some(t) = self.dirty_at
+            && t.elapsed().as_millis() > 500
+            && self.dirty
+        {
+            self.save_config();
+            // Notify poll thread of config change
+            let _ = self.config_tx.send(self.config.clone());
+            self.dirty = false;
+            self.dirty_at = None;
         }
 
         self.check_proxy_alive();
@@ -65,25 +71,51 @@ impl DashboardApp {
             Page::Overview => self.overview_page(ui),
             Page::Connections => self.connections_page(ui),
             Page::Settings => self.settings_page(ui),
+            Page::Logs => self.logs_page(ui),
         }
     }
 
     #[cfg(not(target_arch = "wasm32"))]
     fn check_proxy_alive(&mut self) {
+        if let Some(ref mut h) = self.proxy_handle
+            && !h.is_alive()
+        {
+            let stderr = h.try_read_stderr();
+            let status = h.wait_status();
+            let code = status.map(|s| s.code().unwrap_or(-1)).unwrap_or(-1);
+            let msg = if !stderr.trim().is_empty() {
+                format!("proxy exited (code {}): {}", code, stderr.trim())
+            } else {
+                format!("proxy exited with code {}", code)
+            };
+            // Push to log lines
+            self.push_log(format!("[ERROR] {}", msg));
+            self.set_error(msg);
+            self.proxy_handle = None;
+            self.ws_connected = false;
+            // Clear stale proxy state so topbar doesn't show green
+            self.routes.clear();
+            self.tun_name.clear();
+            self.tun_ip.clear();
+        }
+    }
+
+    fn drain_stderr(&mut self) {
         if let Some(ref mut h) = self.proxy_handle {
-            if !h.is_alive() {
-                let stderr = h.try_read_stderr();
-                let status = h.wait_status();
-                let code = status.map(|s| s.code().unwrap_or(-1)).unwrap_or(-1);
-                let msg = if !stderr.trim().is_empty() {
-                    format!("proxy exited (code {}): {}", code, stderr.trim())
-                } else {
-                    format!("proxy exited with code {}", code)
-                };
-                self.set_error(msg);
-                self.proxy_handle = None;
-                self.ws_connected = false;
+            let stderr = h.try_read_stderr();
+            for line in stderr.lines() {
+                let line = line.trim();
+                if !line.is_empty() {
+                    self.push_log(line.to_string());
+                }
             }
         }
+    }
+
+    fn push_log(&mut self, line: String) {
+        if self.log_lines.len() >= 500 {
+            self.log_lines.pop_front();
+        }
+        self.log_lines.push_back(line);
     }
 }

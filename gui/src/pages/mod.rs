@@ -1,4 +1,5 @@
 mod connections;
+mod logs;
 mod overview;
 mod settings;
 
@@ -7,4 +8,5 @@ pub(crate) enum Page {
     Overview,
     Connections,
     Settings,
+    Logs,
 }

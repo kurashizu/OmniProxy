@@ -19,13 +19,19 @@ fn set_panic_hook() {
         } else {
             "Unknown panic".to_string()
         };
-        let location = info.location().map(|l| {
-            format!("\n\nAt: {}:{}", l.file(), l.line())
-        }).unwrap_or_default();
+        let location = info
+            .location()
+            .map(|l| format!("\n\nAt: {}:{}", l.file(), l.line()))
+            .unwrap_or_default();
         let full = format!("OmniProxy crashed:{msg}{location}");
 
         unsafe extern "system" {
-            fn MessageBoxW(hWnd: *const core::ffi::c_void, lpText: *const u16, lpCaption: *const u16, uType: u32) -> i32;
+            fn MessageBoxW(
+                hWnd: *const core::ffi::c_void,
+                lpText: *const u16,
+                lpCaption: *const u16,
+                uType: u32,
+            ) -> i32;
         }
         let wide: Vec<u16> = full.encode_utf16().chain(std::iter::once(0)).collect();
         let title: Vec<u16> = "OmniProxy Error\0".encode_utf16().collect();
@@ -64,24 +70,23 @@ fn ensure_root() {
 
     let args: Vec<String> = std::env::args().collect();
 
-    if let Ok(output) = std::process::Command::new("which")
-        .arg("pkexec")
-        .output()
+    if let Ok(output) = std::process::Command::new("which").arg("pkexec").output()
+        && output.status.success()
     {
-        if output.status.success() {
-            let status = std::process::Command::new("pkexec")
-                .arg(&exe)
-                .args(&args)
-                .status();
+        let status = std::process::Command::new("pkexec")
+            .arg(&exe)
+            .args(&args)
+            .status();
 
-            match status {
-                Ok(s) => std::process::exit(s.code().unwrap_or(1)),
-                Err(_) => {}
-            }
+        if let Ok(s) = status {
+            std::process::exit(s.code().unwrap_or(1));
         }
     }
 
-    let msg = format!("requires root privileges\n\nPlease run:\nsudo {}", exe.display());
+    let msg = format!(
+        "requires root privileges\n\nPlease run:\nsudo {}",
+        exe.display()
+    );
     let _ = std::process::Command::new("zenity")
         .args(["--error", "--title=OmniProxy", &format!("--text={}", msg)])
         .status()

@@ -89,7 +89,10 @@ fn detect_auto() -> Result<IpAddr> {
         ip_str.parse::<IpAddr>().context("parse IP")
     }
 
-    let script = r#"Get-NetRoute -DestinationPrefix '0.0.0.0/0' | Where-Object { $_.InterfaceAlias -notmatch '^tun' } | Sort-Object RouteMetric | Select-Object -First 1 | ForEach-Object { $_.InterfaceAlias }"#;
+    let script = r#"Get-NetRoute -DestinationPrefix '0.0.0.0/0' | Where-Object {
+        $type = (Get-NetAdapter -InterfaceIndex $_.InterfaceIndex -ErrorAction SilentlyContinue).InterfaceDescription
+        $type -notmatch 'TAP|TUN|Wintun|WireGuard|OpenVPN|VPN|Tunnel'
+    } | Sort-Object RouteMetric | Select-Object -First 1 | ForEach-Object { $_.InterfaceAlias }"#;
     let out = std::process::Command::new("powershell")
         .args(["-NoProfile", "-Command", script])
         .output()

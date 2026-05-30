@@ -1,23 +1,53 @@
 use serde::{Deserialize, Serialize};
 
 pub(crate) fn default_client() -> String {
-    if cfg!(target_os = "windows") { ".\\client.exe".into() } else { "./client".into() }
+    if cfg!(target_os = "windows") {
+        ".\\client.exe".into()
+    } else {
+        "./client".into()
+    }
 }
 pub(crate) fn default_proxy() -> String {
-    if cfg!(target_os = "windows") { ".\\proxy.exe".into() } else { "./proxy".into() }
+    if cfg!(target_os = "windows") {
+        ".\\proxy.exe".into()
+    } else {
+        "./proxy".into()
+    }
 }
-pub(crate) fn default_socks_addr() -> String { "127.0.0.1".into() }
-pub(crate) fn default_socks_port() -> u16 { 1080 }
-pub(crate) fn default_admin_port() -> u16 { 10991 }
+pub(crate) fn default_socks_addr() -> String {
+    "127.0.0.1".into()
+}
+pub(crate) fn default_socks_port() -> u16 {
+    1080
+}
+pub(crate) fn default_admin_port() -> u16 {
+    10991
+}
 pub(crate) fn default_tun_name() -> String {
-    if cfg!(target_os = "macos") { "utun99".into() } else { "tun0".into() }
+    if cfg!(target_os = "macos") {
+        "utun99".into()
+    } else {
+        "tun0".into()
+    }
 }
-pub(crate) fn default_tun_ip() -> String { "198.18.0.1".into() }
-pub(crate) fn default_tun_ip6() -> String { "fd00::1".into() }
-pub(crate) fn default_tun_prefix() -> u8 { 16 }
-pub(crate) fn default_tun_prefix6() -> u8 { 64 }
-pub(crate) fn default_tun_gw() -> String { "198.18.0.2".into() }
-pub(crate) fn default_tun_gw6() -> String { "fd00::2".into() }
+pub(crate) fn default_tun_ip() -> String {
+    "198.18.0.1".into()
+}
+pub(crate) fn default_tun_ip6() -> String {
+    "fd00::1".into()
+}
+pub(crate) fn default_tun_prefix() -> u8 {
+    16
+}
+pub(crate) fn default_tun_prefix6() -> u8 {
+    64
+}
+pub(crate) fn default_tun_gw() -> String {
+    "198.18.0.2".into()
+}
+pub(crate) fn default_tun_gw6() -> String {
+    "fd00::2".into()
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct GuiConfig {

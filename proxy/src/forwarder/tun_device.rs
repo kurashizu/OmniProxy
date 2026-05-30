@@ -222,7 +222,9 @@ mod routes {
                 _ => {}
             }
         } else {
-            warn!("[tun] could not detect physical gateway, skipping scoped route (IP_BOUND_IF may fail)");
+            warn!(
+                "[tun] could not detect physical gateway, skipping scoped route (IP_BOUND_IF may fail)"
+            );
         }
 
         for prefix in ["0.0.0.0/1", "128.0.0.0/1"] {
@@ -355,6 +357,11 @@ mod routes {
     }
 
     pub fn remove(cfg: &Config) {
+        // Remove IP address first (New-NetIPAddress fails silently if IP already exists on restart)
+        let _ = powershell(&format!(
+            "Remove-NetIPAddress -InterfaceAlias '{}' -AddressFamily IPv4 -Confirm:$false -ErrorAction SilentlyContinue",
+            cfg.tun_name
+        ));
         let _ = powershell(&format!(
             "Remove-NetRoute -InterfaceAlias '{}' -DestinationPrefix '0.0.0.0/0' -Confirm:$false -ErrorAction SilentlyContinue",
             cfg.tun_name
@@ -363,6 +370,6 @@ mod routes {
             "Remove-NetRoute -InterfaceAlias '{}' -DestinationPrefix '::/0' -ErrorAction SilentlyContinue",
             cfg.tun_name
         ));
-        info!("[tun] TUN routes removed (Windows)");
+        info!("[tun] TUN routes and IP removed (Windows)");
     }
 }

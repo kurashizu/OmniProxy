@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use base64::{engine::general_purpose::STANDARD, Engine};
+use base64::{Engine, engine::general_purpose::STANDARD};
 use rand::RngCore;
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
@@ -254,7 +254,7 @@ fn iface_from_ip(target: IpAddr) -> Result<String> {
 #[cfg(target_os = "windows")]
 fn iface_from_ip(target: IpAddr) -> Result<u32> {
     use windows::Win32::NetworkManagement::IpHelper::{
-        GetAdaptersAddresses, GAA_FLAG_INCLUDE_PREFIX, IP_ADAPTER_ADDRESSES_LH,
+        GAA_FLAG_INCLUDE_PREFIX, GetAdaptersAddresses, IP_ADAPTER_ADDRESSES_LH,
     };
     use windows::Win32::Networking::WinSock::AF_INET;
 
@@ -321,7 +321,7 @@ fn bind_to_interface(socket: &tokio::net::TcpSocket, ip: IpAddr) -> Result<()> {
 #[cfg(target_os = "windows")]
 fn bind_to_interface(socket: &tokio::net::TcpSocket, ip: IpAddr) -> Result<()> {
     use std::os::windows::io::AsRawSocket;
-    use windows::Win32::Networking::WinSock::{setsockopt, IPPROTO_IP, IP_UNICAST_IF, SOCKET};
+    use windows::Win32::Networking::WinSock::{IP_UNICAST_IF, IPPROTO_IP, SOCKET, setsockopt};
 
     let idx = iface_from_ip(ip)?;
     info!(idx, "IP_UNICAST_IF");

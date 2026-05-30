@@ -1,19 +1,19 @@
 use anyhow::{Context, Result};
 use futures_util::{SinkExt, StreamExt};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
-use tokio::sync::{mpsc, oneshot, RwLock};
+use tokio::sync::{RwLock, mpsc, oneshot};
 use tokio_tungstenite::tungstenite::Message;
 use tracing::{debug, info, warn};
 
 use crate::config::Config;
 use crate::ws::build_ws;
 use protocol::{
-    decode_frame, decode_icmp_payload, decode_udp_payload, encode_frame, encode_frame_bytes,
-    encode_udp_payload, TYPE_ICMP_DATA, TYPE_TCP_CONNECT, TYPE_TCP_CONNECTED, TYPE_TCP_DATA,
-    TYPE_TCP_FIN, TYPE_UDP_DATA,
+    TYPE_ICMP_DATA, TYPE_TCP_CONNECT, TYPE_TCP_CONNECTED, TYPE_TCP_DATA, TYPE_TCP_FIN,
+    TYPE_UDP_DATA, decode_frame, decode_icmp_payload, decode_udp_payload, encode_frame,
+    encode_frame_bytes, encode_udp_payload,
 };
 
 #[derive(Clone)]
@@ -27,15 +27,33 @@ pub(crate) struct StreamMeta {
 
 impl StreamMeta {
     fn tcp(id: u32, target: String, source: String) -> Self {
-        Self { id, protocol: "TCP", target, source, started_at: Instant::now() }
+        Self {
+            id,
+            protocol: "TCP",
+            target,
+            source,
+            started_at: Instant::now(),
+        }
     }
 
     fn udp(id: u32, source: String) -> Self {
-        Self { id, protocol: "UDP", target: String::new(), source, started_at: Instant::now() }
+        Self {
+            id,
+            protocol: "UDP",
+            target: String::new(),
+            source,
+            started_at: Instant::now(),
+        }
     }
 
     fn icmp(id: u32, target: String, source: String) -> Self {
-        Self { id, protocol: "ICMP", target, source, started_at: Instant::now() }
+        Self {
+            id,
+            protocol: "ICMP",
+            target,
+            source,
+            started_at: Instant::now(),
+        }
     }
 }
 
@@ -227,16 +245,19 @@ impl Mux {
 
     async fn dispatch(
         self: &Arc<Self>,
-        mut ws_rx: impl StreamExt<Item = std::result::Result<Message, tokio_tungstenite::tungstenite::Error>>
-            + Unpin
-            + Send
-            + 'static,
+        mut ws_rx: impl StreamExt<
+            Item = std::result::Result<Message, tokio_tungstenite::tungstenite::Error>,
+        > + Unpin
+        + Send
+        + 'static,
         writer: tokio::task::JoinHandle<()>,
     ) {
         loop {
             match ws_rx.next().await {
                 Some(Ok(Message::Binary(data))) => {
-                    self.stats.bytes_rx.fetch_add(data.len() as u64, Ordering::Relaxed);
+                    self.stats
+                        .bytes_rx
+                        .fetch_add(data.len() as u64, Ordering::Relaxed);
                     let (id, typ, payload) = match decode_frame(data) {
                         Ok(v) => v,
                         Err(e) => {
@@ -332,7 +353,9 @@ impl Mux {
         {
             let mut inner = self.inner.write().await;
             inner.streams.insert(id, data_tx);
-            inner.stream_info.insert(id, StreamMeta::tcp(id, target.to_owned(), String::new()));
+            inner
+                .stream_info
+                .insert(id, StreamMeta::tcp(id, target.to_owned(), String::new()));
             inner.connect_notify.insert(id, conn_tx);
         }
         self.send_frame(encode_frame(id, TYPE_TCP_CONNECT, target.as_bytes()))
@@ -360,7 +383,9 @@ impl Mux {
         let (tx, rx) = mpsc::channel(256);
         let mut inner = self.inner.write().await;
         inner.udp_txs.insert(id, tx);
-        inner.stream_info.insert(id, StreamMeta::udp(id, String::new()));
+        inner
+            .stream_info
+            .insert(id, StreamMeta::udp(id, String::new()));
         (id, rx)
     }
 
@@ -370,7 +395,13 @@ impl Mux {
         inner.stream_info.remove(&id);
     }
 
-    pub(crate) async fn udp_send(&self, stream_id: u32, host: &str, port: u16, data: &[u8]) -> Result<()> {
+    pub(crate) async fn udp_send(
+        &self,
+        stream_id: u32,
+        host: &str,
+        port: u16,
+        data: &[u8],
+    ) -> Result<()> {
         debug!(stream_id, host, port, "udp send");
         let payload = encode_udp_payload(host, port, data);
         self.send_frame(encode_frame_bytes(stream_id, TYPE_UDP_DATA, payload))
@@ -391,7 +422,9 @@ impl Mux {
         {
             let mut inner = self.inner.write().await;
             inner.icmp_txs.insert(id, tx);
-            inner.stream_info.insert(id, StreamMeta::icmp(id, target.to_owned(), String::new()));
+            inner
+                .stream_info
+                .insert(id, StreamMeta::icmp(id, target.to_owned(), String::new()));
             inner.connect_notify.insert(id, conn_tx);
         }
         self.send_frame(encode_frame(id, TYPE_ICMP_DATA, target.as_bytes()))

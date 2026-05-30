@@ -1,9 +1,9 @@
 #![cfg(not(target_arch = "wasm32"))]
 
 use std::io::Read;
-use std::process::{Child, ChildStderr, Command, Stdio};
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
+use std::process::{Child, ChildStderr, Command, Stdio};
 
 pub(crate) struct ProxyHandle {
     child: Child,
@@ -38,8 +38,7 @@ impl ProxyHandle {
                 config_path.replace('"', "\\\"")
             );
             let mut cmd = Command::new("osascript");
-            cmd.args(["-e", &script])
-                .stderr(Stdio::piped());
+            cmd.args(["-e", &script]).stderr(Stdio::piped());
             cmd.process_group(0);
             let mut child = cmd.spawn().ok()?;
             let stderr = child.stderr.take().map(set_non_blocking);
@@ -52,8 +51,7 @@ impl ProxyHandle {
             if !cfg!(windows) {
                 cmd.arg(proxy_bin);
             }
-            cmd.args(["-c", config_path])
-                .stderr(Stdio::piped());
+            cmd.args(["-c", config_path]).stderr(Stdio::piped());
             #[cfg(unix)]
             cmd.process_group(0);
             #[cfg(windows)]
@@ -105,7 +103,9 @@ impl ProxyHandle {
                     .status();
                 // Also try process group
                 let pgid = -(pid as i32);
-                unsafe { libc::kill(pgid, libc::SIGTERM); }
+                unsafe {
+                    libc::kill(pgid, libc::SIGTERM);
+                }
                 std::thread::sleep(std::time::Duration::from_millis(500));
                 if self.is_alive() {
                     let _ = Command::new("pkill")
@@ -113,7 +113,9 @@ impl ProxyHandle {
                         .stdout(Stdio::null())
                         .stderr(Stdio::null())
                         .status();
-                    unsafe { libc::kill(pgid, libc::SIGKILL); }
+                    unsafe {
+                        libc::kill(pgid, libc::SIGKILL);
+                    }
                 }
             }
         }

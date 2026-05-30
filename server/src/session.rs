@@ -3,8 +3,8 @@ use bytes::Bytes;
 use dashmap::DashMap;
 use futures_util::{SinkExt, StreamExt};
 use protocol::{
-    decode_frame, decode_udp_payload, encode_frame, TYPE_ICMP_DATA, TYPE_TCP_CONNECT,
-    TYPE_TCP_CONNECTED, TYPE_TCP_DATA, TYPE_TCP_FIN, TYPE_UDP_DATA,
+    TYPE_ICMP_DATA, TYPE_TCP_CONNECT, TYPE_TCP_CONNECTED, TYPE_TCP_DATA, TYPE_TCP_FIN,
+    TYPE_UDP_DATA, decode_frame, decode_udp_payload, encode_frame,
 };
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -152,12 +152,20 @@ pub(crate) async fn handle_socket(socket: WebSocket) {
                             let target_str = match std::str::from_utf8(&payload) {
                                 Ok(s) => s.trim().to_string(),
                                 Err(_) => {
-                                    debug!(stream_id, len = payload.len(), "icmp: ignoring binary data for unknown stream");
+                                    debug!(
+                                        stream_id,
+                                        len = payload.len(),
+                                        "icmp: ignoring binary data for unknown stream"
+                                    );
                                     continue;
                                 }
                             };
                             if target_str.parse::<std::net::SocketAddr>().is_err() {
-                                debug!(stream_id, "icmp: ignoring invalid target: {}", target_str.chars().take(20).collect::<String>());
+                                debug!(
+                                    stream_id,
+                                    "icmp: ignoring invalid target: {}",
+                                    target_str.chars().take(20).collect::<String>()
+                                );
                                 continue;
                             }
 
@@ -166,7 +174,9 @@ pub(crate) async fn handle_socket(socket: WebSocket) {
                             let permit = match max_streams.clone().try_acquire_owned() {
                                 Ok(p) => p,
                                 Err(_) => {
-                                    warn!("[mux] max streams reached, rejecting icmp sid={stream_id}");
+                                    warn!(
+                                        "[mux] max streams reached, rejecting icmp sid={stream_id}"
+                                    );
                                     continue;
                                 }
                             };

@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use protocol::{encode_frame, TYPE_TCP_CONNECTED, TYPE_TCP_DATA, TYPE_TCP_FIN};
+use protocol::{TYPE_TCP_CONNECTED, TYPE_TCP_DATA, TYPE_TCP_FIN, encode_frame};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;

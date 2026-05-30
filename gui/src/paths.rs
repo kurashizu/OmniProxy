@@ -8,12 +8,13 @@ use std::path::PathBuf;
 /// 3. "."                   (fallback)
 pub(crate) fn base_dir() -> PathBuf {
     // AppImage: $APPIMAGE points to the .AppImage file itself
-    if let Ok(appimage) = std::env::var("APPIMAGE") {
-        if let Some(dir) = PathBuf::from(&appimage).parent() {
-            return dir.to_path_buf();
-        }
+    if let Ok(appimage) = std::env::var("APPIMAGE")
+        && let Some(dir) = PathBuf::from(&appimage).parent()
+    {
+        return dir.to_path_buf();
     }
-    std::env::current_exe().ok()
+    std::env::current_exe()
+        .ok()
         .and_then(|p| p.parent().map(|p| p.to_path_buf()))
         .unwrap_or_else(|| PathBuf::from("."))
 }

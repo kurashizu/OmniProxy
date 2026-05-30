@@ -5,8 +5,8 @@ use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::tcp::OwnedWriteHalf;
 use tokio::net::TcpStream;
+use tokio::net::tcp::OwnedWriteHalf;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
@@ -177,7 +177,11 @@ impl IcmpHandler {
                         Ok(ip) => ip,
                         Err(_) => continue,
                     };
-                    if inbound_tx.send((session_dst, src, icmp_data.to_vec())).await.is_err() {
+                    if inbound_tx
+                        .send((session_dst, src, icmp_data.to_vec()))
+                        .await
+                        .is_err()
+                    {
                         break;
                     }
                 }
@@ -236,7 +240,11 @@ fn parse_ip_icmp(pkt: &[u8]) -> Result<(IpAddr, Vec<u8>, u8)> {
         6 => {
             anyhow::ensure!(pkt.len() >= 40, "IPv6 packet too short");
             let next_header = pkt[6];
-            anyhow::ensure!(next_header == 58, "not ICMPv6 (next_header={})", next_header);
+            anyhow::ensure!(
+                next_header == 58,
+                "not ICMPv6 (next_header={})",
+                next_header
+            );
 
             let mut dst_bytes = [0u8; 16];
             dst_bytes.copy_from_slice(&pkt[24..40]);

@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use bytes::Bytes;
-use protocol::{encode_frame_bytes, encode_icmp_payload, TYPE_ICMP_DATA};
+use protocol::{TYPE_ICMP_DATA, encode_frame_bytes, encode_icmp_payload};
 use std::net::SocketAddr;
 use std::os::fd::FromRawFd;
 use std::sync::Arc;

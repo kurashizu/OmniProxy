@@ -59,4 +59,6 @@ pub(crate) struct DashboardApp {
     pub(crate) dirty_at: Option<web_time::Instant>,
 
     pub(crate) stats_rx: std::sync::mpsc::Receiver<PollResult>,
+    pub(crate) config_tx: std::sync::mpsc::Sender<GuiConfig>,
+    pub(crate) log_lines: std::collections::VecDeque<String>,
 }

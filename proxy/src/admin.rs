@@ -1,8 +1,8 @@
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::Arc;
-use std::time::Instant;
-use axum::{Router, routing::get, Json};
+use axum::{Json, Router, routing::get};
 use serde::Serialize;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::time::Instant;
 
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct RouteEntry {
@@ -54,14 +54,18 @@ pub(crate) async fn serve(stats: Arc<ProxyStats>, port: u16) {
     axum::serve(listener, app).await.ok();
 }
 
-async fn health(axum::extract::State(s): axum::extract::State<Arc<ProxyStats>>) -> Json<serde_json::Value> {
+async fn health(
+    axum::extract::State(s): axum::extract::State<Arc<ProxyStats>>,
+) -> Json<serde_json::Value> {
     Json(serde_json::json!({
         "status": "ok",
         "client_alive": s.client_alive.load(Ordering::Relaxed),
     }))
 }
 
-async fn stats_handler(axum::extract::State(s): axum::extract::State<Arc<ProxyStats>>) -> Json<serde_json::Value> {
+async fn stats_handler(
+    axum::extract::State(s): axum::extract::State<Arc<ProxyStats>>,
+) -> Json<serde_json::Value> {
     let uptime = s.started_at.elapsed().as_secs_f64();
     let tun_name = s.tun_name.read().await.clone();
     let tun_ip = s.tun_ip.read().await.clone();
@@ -81,7 +85,9 @@ async fn stats_handler(axum::extract::State(s): axum::extract::State<Arc<ProxySt
     }))
 }
 
-async fn routes_handler(axum::extract::State(s): axum::extract::State<Arc<ProxyStats>>) -> Json<serde_json::Value> {
+async fn routes_handler(
+    axum::extract::State(s): axum::extract::State<Arc<ProxyStats>>,
+) -> Json<serde_json::Value> {
     let routes = s.routes.read().await;
     Json(serde_json::json!({ "routes": *routes }))
 }

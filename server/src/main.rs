@@ -6,8 +6,8 @@ mod udp;
 mod ws;
 
 use anyhow::Result;
-use axum::routing::get;
 use axum::Router;
+use axum::routing::get;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
@@ -23,8 +23,7 @@ async fn main() -> Result<()> {
         use tracing_subscriber::prelude::*;
         let (console_layer, server) = console_subscriber::ConsoleLayer::new();
         tokio::spawn(server.serve());
-        let env_filter =
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| "server=info".into());
+        let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| "server=info".into());
         tracing_subscriber::registry()
             .with(tracing_subscriber::fmt::layer().with_filter(env_filter))
             .with(console_layer)
@@ -33,9 +32,7 @@ async fn main() -> Result<()> {
 
     #[cfg(not(feature = "console"))]
     tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| "server=info".into()),
-        )
+        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| "server=info".into()))
         .init();
 
     let cfg = Config::load()?;
@@ -58,7 +55,10 @@ async fn main() -> Result<()> {
 #[cfg(unix)]
 fn raise_nofile_limit() {
     unsafe {
-        let mut rl = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
+        let mut rl = libc::rlimit {
+            rlim_cur: 0,
+            rlim_max: 0,
+        };
         if libc::getrlimit(libc::RLIMIT_NOFILE, &mut rl) == 0 {
             let target = rl.rlim_max.min(65535);
             if rl.rlim_cur < target {

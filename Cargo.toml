@@ -3,7 +3,7 @@ members = ["protocol", "client", "server", "proxy", "gui"]
 resolver = "2"
 
 [workspace.package]
-version = "1.0.4-beta.1"
+version = "1.0.4-beta.21"
 edition = "2024"
 
 [profile.release]
