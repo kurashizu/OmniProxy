@@ -72,7 +72,6 @@ jobs:
                   chmod +x target/${{ matrix.target }}/release/server
                   chmod +x target/${{ matrix.target }}/release/proxy
               shell: bash
-              shell: bash
 
             - name: Ad-hoc sign (macOS)
               if: matrix.os == 'macos-latest'
@@ -181,7 +180,6 @@ jobs:
 
             - name: Set executable permissions
               run: chmod +x target/${{ matrix.target }}/release/OmniProxy
-              shell: bash
               shell: bash
 
             - name: Ad-hoc sign (macOS)
