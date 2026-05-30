@@ -3,7 +3,10 @@ use protocol::{encode_frame, TYPE_TCP_CONNECTED, TYPE_TCP_DATA, TYPE_TCP_FIN};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
-use tracing::warn;
+use tokio::time::Duration;
+use tracing::{debug, warn};
+
+const TCP_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
 
 pub(crate) async fn run(
     stream_id: u32,
@@ -38,13 +41,17 @@ pub(crate) async fn run(
     let down = tokio::spawn(async move {
         let mut buf = vec![0u8; 32 * 1024];
         loop {
-            match ur.read(&mut buf).await {
-                Ok(0) | Err(_) => break,
-                Ok(n) => {
+            match tokio::time::timeout(TCP_IDLE_TIMEOUT, ur.read(&mut buf)).await {
+                Ok(Ok(0)) | Ok(Err(_)) => break,
+                Ok(Ok(n)) => {
                     let frame = encode_frame(stream_id, TYPE_TCP_DATA, &buf[..n]);
                     if ftx.send(frame).await.is_err() {
                         break;
                     }
+                }
+                Err(_) => {
+                    debug!(stream_id, "[TCP] idle timeout (upstream read)");
+                    break;
                 }
             }
         }
@@ -54,9 +61,18 @@ pub(crate) async fn run(
     });
 
     let up = tokio::spawn(async move {
-        while let Some(data) = up_rx.recv().await {
-            if uw.write_all(&data).await.is_err() {
-                break;
+        loop {
+            match tokio::time::timeout(TCP_IDLE_TIMEOUT, up_rx.recv()).await {
+                Ok(Some(data)) => {
+                    if uw.write_all(&data).await.is_err() {
+                        break;
+                    }
+                }
+                Ok(None) => break,
+                Err(_) => {
+                    debug!(stream_id, "[TCP] idle timeout (mux read)");
+                    break;
+                }
             }
         }
         uw.shutdown().await.ok();
