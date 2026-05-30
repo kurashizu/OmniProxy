@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use futures::{SinkExt, StreamExt};
 #[cfg(unix)]
-use libc;
+use libc::setsockopt;
 use netstack_smoltcp::udp::{ReadHalf, UdpMsg, WriteHalf};
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -167,14 +167,14 @@ async fn create_session(
         use std::os::unix::io::AsRawFd;
         let fd = relay_socket.as_raw_fd();
         unsafe {
-            libc::setsockopt(
+            setsockopt(
                 fd,
                 libc::SOL_SOCKET,
                 libc::SO_RCVBUF,
                 &(2 * 1024 * 1024 as libc::c_int) as *const _ as *const libc::c_void,
                 std::mem::size_of::<libc::c_int>() as libc::socklen_t,
             );
-            libc::setsockopt(
+            setsockopt(
                 fd,
                 libc::SOL_SOCKET,
                 libc::SO_SNDBUF,

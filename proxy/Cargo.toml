@@ -8,6 +8,7 @@ name = "proxy"
 path = "src/main.rs"
 
 [dependencies]
+protocol     = { path = "../protocol" }
 tokio        = { version = "1", features = ["full"] }
 anyhow       = "1"
 tracing      = "0.1"

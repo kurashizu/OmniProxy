@@ -30,10 +30,10 @@ pub async fn kill_quiet(child: &mut Child) {
             let _ = tokio::time::timeout(Duration::from_secs(2), child.wait()).await;
         }
     }
-    if let Err(e) = child.kill().await {
-        if e.kind() != std::io::ErrorKind::InvalidInput {
-            warn!("[stack] kill: {e}");
-        }
+    if let Err(e) = child.kill().await
+        && e.kind() != std::io::ErrorKind::InvalidInput
+    {
+        warn!("[stack] kill: {e}");
     }
     if let Err(e) = child.wait().await {
         debug!("[stack] wait: {e}");

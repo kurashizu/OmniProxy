@@ -1,6 +1,7 @@
 // Forwarder: netstack-smoltcp based TUN-to-SOCKS5 transparent proxy.
 
 pub mod tun_device;
+mod icmp;
 mod udp;
 
 use anyhow::{Context, Result};
@@ -67,48 +68,59 @@ impl Forwarder {
         let (mut stack_sink, mut stack_stream) = stack.split();
         let (mut tun_stream, mut tun_sink) = tun_framed.split();
 
-        // Channel for writing packets back to TUN
-        let (tun_write_tx, mut tun_write_rx) = mpsc::channel::<BytesMut>(2048);
+        // Channels for writing packets back to TUN
+        // TCP/UDP uses a larger channel (bursty), ICMP uses a small low-latency channel
+        let (tun_write_tx, mut tun_write_rx) = mpsc::channel::<BytesMut>(8192);
+        let (icmp_tun_tx, mut icmp_tun_rx) = mpsc::channel::<BytesMut>(256);
 
-        // TUN writer task
+        // TUN writer task: merges TCP/UDP and ICMP reply streams
         let tun_writer = tokio::spawn(async move {
-            while let Some(pkt) = tun_write_rx.recv().await {
-                if tun_sink.send(pkt).await.is_err() {
-                    warn!("[forwarder] tun write failed");
-                    break;
+            loop {
+                tokio::select! {
+                    pkt = tun_write_rx.recv() => {
+                        let Some(pkt) = pkt else { break };
+                        if tun_sink.send(pkt).await.is_err() {
+                            warn!("[forwarder] tun write failed");
+                            break;
+                        }
+                    }
+                    pkt = icmp_tun_rx.recv() => {
+                        let Some(pkt) = pkt else { break };
+                        if tun_sink.send(pkt).await.is_err() {
+                            warn!("[forwarder] tun write failed");
+                            break;
+                        }
+                    }
                 }
             }
         });
 
-        // TUN -> stack
+        // ICMP handler (intercepts ICMP from TUN before netstack)
+        let (icmp_handler, icmp_outbound_tx) =
+            icmp::IcmpHandler::new(self.socks_port, icmp_tun_tx);
+
+        // TUN -> demux (ICMP vs TCP/UDP)
         let tun_to_stack = tokio::spawn(async move {
-            let mut count: u64 = 0;
             while let Some(pkt) = tun_stream.next().await {
                 match pkt {
                     Ok(p) => {
-                        count += 1;
-                        // Log first few packets with protocol info
-                        if count <= 20 || count % 1000 == 0 {
-                            let proto = if p.len() >= 10 {
-                                match p[9] {
-                                    6 => "TCP",
-                                    17 => "UDP",
-                                    1 => "ICMP",
-                                    _ => "OTHER",
-                                }
-                            } else {
-                                "SHORT"
-                            };
-                            debug!(
-                                "[forwarder] tun->stack: {} bytes (#{}) proto={}",
-                                p.len(),
-                                count,
-                                proto
-                            );
-                        }
-                        if stack_sink.send(p.to_vec()).await.is_err() {
-                            warn!("[forwarder] stack sink closed");
-                            break;
+                        // ICMP demux: check IP protocol before sending to netstack
+                        let is_icmp = !p.is_empty() && match (p[0] >> 4) & 0x0F {
+                            4 if p.len() > 9 => p[9] == 1,
+                            6 if p.len() > 6 => p[6] == 58,
+                            _ => false,
+                        };
+
+                        if is_icmp {
+                            if icmp_outbound_tx.send(p.to_vec()).await.is_err() {
+                                warn!("[forwarder] icmp channel closed");
+                                break;
+                            }
+                        } else {
+                            if stack_sink.send(p.to_vec()).await.is_err() {
+                                warn!("[forwarder] stack sink closed");
+                                break;
+                            }
                         }
                     }
                     Err(e) => {
@@ -117,6 +129,12 @@ impl Forwarder {
                     }
                 }
             }
+        });
+
+        // ICMP handler task: receives outbound ICMP from TUN, manages SOCKS5 sessions,
+        // reads inbound ICMP replies from SOCKS5, rebuilds IP packets, writes to TUN
+        let icmp_task = tokio::spawn(async move {
+            icmp_handler.run().await;
         });
 
         // stack -> TUN
@@ -171,6 +189,7 @@ impl Forwarder {
             _ = stack_to_tun => warn!("[forwarder] stack->tun died"),
             _ = tcp_task      => warn!("[forwarder] tcp handler died"),
             _ = udp_task      => warn!("[forwarder] udp handler died"),
+            _ = icmp_task     => warn!("[forwarder] icmp handler died"),
             _ = tun_writer    => warn!("[forwarder] tun writer died"),
         }
 
