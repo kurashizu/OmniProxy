@@ -59,9 +59,19 @@ jobs:
               run: ls -lh target/${{ matrix.target }}/release/gui${{ matrix.ext }}
               shell: bash
 
+            - name: Install FUSE (Linux)
+              if: startsWith(matrix.os, 'ubuntu')
+              run: sudo apt-get install -y fuse libfuse2
+              shell: bash
+
             - name: Bundle .app (macOS)
               if: matrix.os == 'macos-latest'
               run: bash scripts/bundle_gui.sh target/${{ matrix.target }}/release
+
+            - name: Bundle AppImage (Linux)
+              if: startsWith(matrix.os, 'ubuntu')
+              run: bash scripts/bundle_appimage.sh target/${{ matrix.target }}/release
+              shell: bash
 
             - name: Upload artifact
               uses: actions/upload-artifact@v4
@@ -70,4 +80,5 @@ jobs:
                   path: |
                       target/${{ matrix.target }}/release/gui${{ matrix.ext }}
                       target/${{ matrix.target }}/release/*.app/
+                      target/${{ matrix.target }}/release/*.AppImage
                   retention-days: 2
