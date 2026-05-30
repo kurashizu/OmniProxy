@@ -15,6 +15,9 @@ use config::{AppState, Config};
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    #[cfg(unix)]
+    raise_nofile_limit();
+
     #[cfg(feature = "console")]
     {
         use tracing_subscriber::prelude::*;
@@ -50,4 +53,18 @@ async fn main() -> Result<()> {
     info!("ws server on {bind}");
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+#[cfg(unix)]
+fn raise_nofile_limit() {
+    unsafe {
+        let mut rl = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
+        if libc::getrlimit(libc::RLIMIT_NOFILE, &mut rl) == 0 {
+            let target = rl.rlim_max.min(65535);
+            if rl.rlim_cur < target {
+                rl.rlim_cur = target;
+                libc::setrlimit(libc::RLIMIT_NOFILE, &rl);
+            }
+        }
+    }
 }

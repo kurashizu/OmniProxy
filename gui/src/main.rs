@@ -35,9 +35,73 @@ fn set_panic_hook() {
     }));
 }
 
+fn load_icon() -> egui::IconData {
+    let bytes = include_bytes!("../icon.png");
+    let image = image::load_from_memory(bytes)
+        .expect("failed to load icon")
+        .into_rgba8();
+    let (width, height) = image.dimensions();
+    egui::IconData {
+        rgba: image.into_raw(),
+        width,
+        height,
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn ensure_root() {
+    if unsafe { libc::getuid() } == 0 {
+        return;
+    }
+
+    let exe = match std::env::current_exe() {
+        Ok(e) => e,
+        Err(_) => {
+            eprintln!("this program requires root privileges");
+            std::process::exit(1);
+        }
+    };
+
+    let args: Vec<String> = std::env::args().collect();
+
+    if let Ok(output) = std::process::Command::new("which")
+        .arg("pkexec")
+        .output()
+    {
+        if output.status.success() {
+            let status = std::process::Command::new("pkexec")
+                .arg(&exe)
+                .args(&args)
+                .status();
+
+            match status {
+                Ok(s) => std::process::exit(s.code().unwrap_or(1)),
+                Err(_) => {}
+            }
+        }
+    }
+
+    let msg = format!("requires root privileges\n\nPlease run:\nsudo {}", exe.display());
+    let _ = std::process::Command::new("zenity")
+        .args(["--error", "--title=OmniProxy", &format!("--text={}", msg)])
+        .status()
+        .or_else(|_| {
+            std::process::Command::new("kdialog")
+                .args(["--error", &msg, "--title", "OmniProxy"])
+                .status()
+        });
+
+    eprintln!("this program requires root privileges");
+    eprintln!("  sudo {}", exe.display());
+    std::process::exit(1);
+}
+
 fn main() {
     #[cfg(all(not(debug_assertions), target_os = "windows"))]
     set_panic_hook();
+
+    #[cfg(target_os = "linux")]
+    ensure_root();
 
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -55,7 +119,11 @@ fn main() {
         eframe::run_native(
             "OmniProxy",
             eframe::NativeOptions {
-                viewport: egui::ViewportBuilder::default().with_inner_size([800.0, 500.0]),
+                viewport: egui::ViewportBuilder::default()
+                    .with_inner_size([800.0, 500.0])
+                    .with_resizable(false)
+                    .with_maximize_button(false)
+                    .with_icon(load_icon()),
                 renderer: eframe::Renderer::Wgpu,
                 wgpu_options,
                 ..Default::default()

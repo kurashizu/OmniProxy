@@ -2,6 +2,8 @@
 
 use std::io::Read;
 use std::process::{Child, ChildStderr, Command, Stdio};
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 
 pub(crate) struct ProxyHandle {
     child: Child,
@@ -10,11 +12,19 @@ pub(crate) struct ProxyHandle {
 
 impl ProxyHandle {
     pub(crate) fn start(proxy_bin: &str, config_path: &str) -> Option<Self> {
-        let mut child = Command::new(proxy_bin)
-            .args(["-c", config_path])
+        let mut cmd = Command::new(proxy_bin);
+        cmd.args(["-c", config_path])
             .stderr(Stdio::piped())
-            .spawn()
-            .ok()?;
+            .stdout(Stdio::piped());
+        #[cfg(unix)]
+        cmd.process_group(0);
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x08000000;
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+        let mut child = cmd.spawn().ok()?;
         let stderr = child.stderr.take().map(set_non_blocking);
         Some(Self { child, stderr })
     }
@@ -27,22 +37,22 @@ impl ProxyHandle {
                 proxy_bin.replace('"', "\\\""),
                 config_path.replace('"', "\\\"")
             );
-            let mut child = Command::new("osascript")
-                .args(["-e", &script])
-                .stderr(Stdio::piped())
-                .spawn()
-                .ok()?;
+            let mut cmd = Command::new("osascript");
+            cmd.args(["-e", &script])
+                .stderr(Stdio::piped());
+            cmd.process_group(0);
+            let mut child = cmd.spawn().ok()?;
             let stderr = child.stderr.take().map(set_non_blocking);
             return Some(Self { child, stderr });
         }
 
         #[cfg(not(target_os = "macos"))]
         {
-            let mut child = Command::new("sudo")
-                .args([proxy_bin, "-c", config_path])
-                .stderr(Stdio::piped())
-                .spawn()
-                .ok()?;
+            let mut cmd = Command::new("sudo");
+            cmd.args([proxy_bin, "-c", config_path])
+                .stderr(Stdio::piped());
+            cmd.process_group(0);
+            let mut child = cmd.spawn().ok()?;
             let stderr = child.stderr.take().map(set_non_blocking);
             Some(Self { child, stderr })
         }
@@ -73,6 +83,29 @@ impl ProxyHandle {
     }
 
     pub(crate) fn stop(&mut self) {
+        #[cfg(unix)]
+        {
+            let pid = self.child.id();
+            if pid != 0 {
+                let pgid = -(pid as i32);
+                unsafe { libc::kill(pgid, libc::SIGTERM); }
+                std::thread::sleep(std::time::Duration::from_millis(500));
+                if self.is_alive() {
+                    unsafe { libc::kill(pgid, libc::SIGKILL); }
+                }
+            }
+        }
+        #[cfg(windows)]
+        {
+            let pid = self.child.id();
+            if pid != 0 {
+                let _ = Command::new("taskkill")
+                    .args(["/T", "/F", "/PID", &pid.to_string()])
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status();
+            }
+        }
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
