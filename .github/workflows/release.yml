@@ -65,6 +65,13 @@ jobs:
               env:
                   RUSTFLAGS: ${{ startsWith(matrix.os, 'windows') && '-Ctarget-feature=+crt-static' || '' }}
               run: cargo build -p client -p server -p proxy --release --target ${{ matrix.target }}
+
+            - name: Set executable permissions
+              run: |
+                  chmod +x target/${{ matrix.target }}/release/client
+                  chmod +x target/${{ matrix.target }}/release/server
+                  chmod +x target/${{ matrix.target }}/release/proxy
+              shell: bash
               shell: bash
 
             - name: Ad-hoc sign (macOS)
@@ -171,6 +178,10 @@ jobs:
 
             - name: Build GUI
               run: cargo build -p gui --release --target ${{ matrix.target }}
+
+            - name: Set executable permissions
+              run: chmod +x target/${{ matrix.target }}/release/OmniProxy
+              shell: bash
               shell: bash
 
             - name: Ad-hoc sign (macOS)
@@ -291,6 +302,12 @@ jobs:
                   fi
 
                   # README
+
+                  # Set executable permissions (Unix)
+                  if [ "${{ matrix.platform }}" != "windows" ]; then
+                      chmod +x dist/client dist/server dist/proxy
+                      if [ -f dist/OmniProxy ]; then chmod +x dist/OmniProxy; fi
+                  fi
                   cp README.md dist/ 2>/dev/null || true
 
             - name: Create archive (tar.xz)

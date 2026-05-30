@@ -55,6 +55,10 @@ jobs:
             - name: Build
               run: cargo build -p gui --release --target ${{ matrix.target }}
 
+            - name: Set executable permissions
+              run: chmod +x target/${{ matrix.target }}/release/OmniProxy
+              shell: bash
+
             - name: Verify binary
               run: ls -lh target/${{ matrix.target }}/release/OmniProxy${{ matrix.ext }}
               shell: bash
