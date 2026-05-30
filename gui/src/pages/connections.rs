@@ -19,24 +19,35 @@ impl DashboardApp {
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                let cols = ["ID", "Protocol", "Source", "Target", "Duration"];
-                let col_w = ui.available_width() / cols.len() as f32;
+                let total_w = ui.available_width();
+                let weights = [0.08, 0.12, 0.30, 0.35, 0.15];
 
                 egui::Grid::new("conn_grid")
                     .striped(true)
-                    .min_col_width(col_w)
+                    .num_columns(5)
+                    .min_col_width(40.0)
                     .show(ui, |ui| {
-                        for h in cols {
-                            ui.strong(h);
+                        let headers = ["ID", "Protocol", "Source", "Target", "Duration"];
+                        for (i, h) in headers.iter().enumerate() {
+                            let w = total_w * weights[i];
+                            ui.add(egui::Label::new(egui::RichText::new(*h).strong()).truncate());
+                            if i < headers.len() - 1 {
+                                ui.add_space(w - 40.0);
+                            }
                         }
                         ui.end_row();
 
                         for c in &self.connections_raw {
-                            ui.label(c.get("id").and_then(|v| v.as_u64()).map(|v| v.to_string()).unwrap_or_default());
-                            ui.label(c.get("protocol").and_then(|v| v.as_str()).unwrap_or(""));
-                            ui.label(c.get("source").and_then(|v| v.as_str()).unwrap_or("-"));
-                            ui.label(c.get("target").and_then(|v| v.as_str()).unwrap_or(""));
+                            let id = c.get("id").and_then(|v| v.as_u64()).map(|v| v.to_string()).unwrap_or_default();
+                            let proto = c.get("protocol").and_then(|v| v.as_str()).unwrap_or("");
+                            let src = c.get("source").and_then(|v| v.as_str()).unwrap_or("-");
+                            let tgt = c.get("target").and_then(|v| v.as_str()).unwrap_or("");
                             let dur = c.get("duration_secs").and_then(|v| v.as_f64()).unwrap_or(0.0);
+
+                            ui.label(&id);
+                            ui.label(proto);
+                            ui.add(egui::Label::new(src).truncate());
+                            ui.add(egui::Label::new(tgt).truncate());
                             ui.label(format!("{:.1}s", dur));
                             ui.end_row();
                         }

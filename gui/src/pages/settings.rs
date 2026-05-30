@@ -78,12 +78,8 @@ fn kv_edit_opt(ui: &mut egui::Ui, label: &str, value: &mut Option<String>) -> bo
 }
 
 impl DashboardApp {
-    fn save_config(&self) {
-        let path = if self.config_path.is_empty() {
-            self.exe_dir.join("config.yml")
-        } else {
-            std::path::PathBuf::from(&self.config_path)
-        };
+    pub(crate) fn save_config(&self) {
+        let path = self.exe_dir.join("config.yml");
         if let Ok(yaml) = serde_yaml::to_string(&self.config) {
             let _ = std::fs::write(&path, &yaml);
         }
@@ -156,7 +152,8 @@ impl DashboardApp {
             });
         });
         if dirty {
-            self.save_config();
+            self.dirty = true;
+            self.dirty_at = Some(web_time::Instant::now());
         }
     }
 }

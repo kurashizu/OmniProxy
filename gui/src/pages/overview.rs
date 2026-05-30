@@ -84,9 +84,15 @@ impl DashboardApp {
 
             cols[1].heading("TUN Status");
             cols[1].add_space(4.0);
+            let dev = if self.tun_name.is_empty() { self.config.tun_name.clone() } else { self.tun_name.clone() };
+            let ip4 = if self.tun_ip.is_empty() {
+                format!("{}/{}", self.config.tun_ip, self.config.tun_prefix)
+            } else {
+                self.tun_ip.clone()
+            };
             kv_table(&mut cols[1], "tun_grid", &[
-                ("Device :",  if self.tun_name.is_empty() { "-".into() } else { self.tun_name.clone() }),
-                ("IPv4 :",    format!("{}/{}", self.config.tun_ip, self.config.tun_prefix)),
+                ("Device :",  if dev.is_empty() { "-".into() } else { dev }),
+                ("IPv4 :",    if ip4.is_empty() { "-".into() } else { ip4 }),
                 ("IPv4 Gateway :", self.config.tun_gw.clone()),
                 ("IPv6 :",    format!("{}/{}", self.config.tun_ip6, self.config.tun_prefix6)),
                 ("IPv6 Gateway :", self.config.tun_gw6.clone()),
@@ -96,12 +102,8 @@ impl DashboardApp {
             cols[1].heading("Server Info");
             cols[1].add_space(4.0);
             kv_table(&mut cols[1], "server_grid", &[
-                ("Server :",      if self.server.is_empty() { "-".into() } else { self.server.clone() }),
-                ("SOCKS5 :",      if self.socks5.is_empty() { "-".into() } else { self.socks5.clone() }),
-                ("Resolved IP :", if self.server_resolved_ip.is_empty() { "-".into() } else { self.server_resolved_ip.clone() }),
-                ("Egress IPv4 :", if self.server_egress_ip4.is_empty() { "-".into() } else { self.server_egress_ip4.clone() }),
-                ("Egress IPv6 :", if self.server_egress_ip6.is_empty() { "-".into() } else { self.server_egress_ip6.clone() }),
-                ("Latency :",     if self.latency_ms > 0.0 { format!("{:.0} ms", self.latency_ms) } else { "-".into() }),
+                ("Server :", if self.server.is_empty() { "-".into() } else { self.server.clone() }),
+                ("SOCKS5 :", if self.socks5.is_empty() { "-".into() } else { self.socks5.clone() }),
             ]);
         });
     }

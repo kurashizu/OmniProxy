@@ -85,6 +85,8 @@ impl DashboardApp {
                 self.error_msg = None;
                 return;
             }
+            let remaining = std::time::Duration::from_secs(8).saturating_sub(t.elapsed());
+            ctx.request_repaint_after(remaining);
             let msg = msg.clone();
             egui::TopBottomPanel::top("error_banner")
                 .resizable(false)
@@ -108,11 +110,7 @@ impl DashboardApp {
     #[cfg(not(target_arch = "wasm32"))]
     fn start_proxy(&mut self) {
         let proxy_bin = self.exe_dir.join(&self.config.proxy);
-        let config_path = if self.config_path.is_empty() {
-            self.exe_dir.join("config.yml")
-        } else {
-            std::path::PathBuf::from(&self.config_path)
-        };
+        let config_path = self.exe_dir.join("config.yml");
 
         if !proxy_bin.exists() {
             self.set_error(format!("proxy binary not found: {}", proxy_bin.display()));

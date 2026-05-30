@@ -1,8 +1,7 @@
 #![cfg(not(target_arch = "wasm32"))]
 
-use std::io::{Read, Write};
+use std::io::Read;
 use std::process::{Child, ChildStderr, Command, Stdio};
-use std::time::Duration;
 
 pub(crate) struct ProxyHandle {
     child: Child,
@@ -16,18 +15,37 @@ impl ProxyHandle {
             .stderr(Stdio::piped())
             .spawn()
             .ok()?;
-        let stderr = child.stderr.take();
+        let stderr = child.stderr.take().map(set_non_blocking);
         Some(Self { child, stderr })
     }
 
     pub(crate) fn start_sudo(proxy_bin: &str, config_path: &str) -> Option<Self> {
-        let mut child = Command::new("sudo")
-            .args([proxy_bin, "-c", config_path])
-            .stderr(Stdio::piped())
-            .spawn()
-            .ok()?;
-        let stderr = child.stderr.take();
-        Some(Self { child, stderr })
+        #[cfg(target_os = "macos")]
+        {
+            let script = format!(
+                "do shell script \"{} -c {}\" with administrator privileges",
+                proxy_bin.replace('"', "\\\""),
+                config_path.replace('"', "\\\"")
+            );
+            let mut child = Command::new("osascript")
+                .args(["-e", &script])
+                .stderr(Stdio::piped())
+                .spawn()
+                .ok()?;
+            let stderr = child.stderr.take().map(set_non_blocking);
+            return Some(Self { child, stderr });
+        }
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            let mut child = Command::new("sudo")
+                .args([proxy_bin, "-c", config_path])
+                .stderr(Stdio::piped())
+                .spawn()
+                .ok()?;
+            let stderr = child.stderr.take().map(set_non_blocking);
+            Some(Self { child, stderr })
+        }
     }
 
     pub(crate) fn is_alive(&mut self) -> bool {
@@ -37,11 +55,14 @@ impl ProxyHandle {
     pub(crate) fn try_read_stderr(&mut self) -> String {
         let mut buf = String::new();
         if let Some(ref mut stderr) = self.stderr {
-            use std::io::Read;
             let mut tmp = [0u8; 4096];
-            while let Ok(n) = stderr.read(&mut tmp) {
-                if n == 0 { break; }
-                buf.push_str(&String::from_utf8_lossy(&tmp[..n]));
+            loop {
+                match stderr.read(&mut tmp) {
+                    Ok(0) => break,
+                    Ok(n) => buf.push_str(&String::from_utf8_lossy(&tmp[..n])),
+                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
+                    Err(_) => break,
+                }
             }
         }
         buf
@@ -61,18 +82,15 @@ impl ProxyHandle {
     }
 }
 
-pub(crate) fn fetch_json(host: &str, port: u16, path: &str) -> Option<serde_json::Value> {
-    let addr = format!("{host}:{port}");
-    let mut stream = std::net::TcpStream::connect_timeout(&addr.parse().ok()?, Duration::from_secs(2)).ok()?;
-    stream
-        .write_all(
-            format!("GET {path} HTTP/1.0\r\nHost: {host}\r\nConnection: close\r\n\r\n").as_bytes(),
-        )
-        .ok()?;
-    stream.set_read_timeout(Some(Duration::from_secs(2))).ok()?;
-    let mut buf = Vec::new();
-    stream.read_to_end(&mut buf).ok()?;
-    let body = String::from_utf8_lossy(&buf);
-    let body = body.split("\r\n\r\n").nth(1).unwrap_or(&body);
-    serde_json::from_str(&body).ok()
+#[cfg(unix)]
+fn set_non_blocking(stderr: ChildStderr) -> ChildStderr {
+    use std::os::unix::io::AsRawFd;
+    let fd = stderr.as_raw_fd();
+    unsafe { libc::fcntl(fd, libc::F_SETFL, libc::O_NONBLOCK) };
+    stderr
+}
+
+#[cfg(not(unix))]
+fn set_non_blocking(stderr: ChildStderr) -> ChildStderr {
+    stderr
 }
