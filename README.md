@@ -1,13 +1,14 @@
 # OmniProxy
 
-A self-hosted transparent proxy suite that tunnels all system traffic through encrypted WebSocket connections with stream multiplexing. Supports TCP/UDP, with full-system TUN mode for seamless traffic routing.
+A self-hosted transparent proxy suite that tunnels all system traffic through encrypted WebSocket connections with stream multiplexing. Supports TCP/UDP/ICMP, with full-system TUN mode for seamless traffic routing.
 
 ## Features
 
 - **WebSocket transport** — Tunnel traffic through Cloudflare Workers or any WebSocket endpoint
-- **Stream multiplexing** — Multiple TCP/UDP streams share a single WebSocket connection
-- **Connection handling** — Client retries reconnect a bounded number of times; outbound IP can be bound explicitly when needed
+- **Stream multiplexing** — Multiple TCP/UDP/ICMP streams share a single WebSocket connection
+- **Connection handling** — Client retries with exponential backoff and unlimited retries; outbound IP can be bound explicitly when needed
 - **TUN transparent proxy** — Route all system traffic through the proxy via built-in TUN forwarder
+- **ICMP passthrough** — Ping (IPv4 and IPv6) works through the proxy
 - **Cross-platform** — Linux, macOS, and Windows support
 
 ## Quick Start
@@ -112,11 +113,11 @@ phys_iface: ""
 Browser/App → SOCKS5 client (127.0.0.1:1080) → WebSocket → server → target
 ```
 
-**client**: SOCKS5 proxy server that multiplexes all streams over a persistent WebSocket connection to the server. Supports outbound IP binding; reconnect is capped.
+**client**: SOCKS5 proxy server that multiplexes all streams over a persistent WebSocket connection to the server. Supports TCP, UDP, and ICMP (ping). Handles reconnection with exponential backoff.
 
-**server**: WebSocket relay that demultiplexes streams and bridges to target TCP/UDP endpoints.
+**server**: WebSocket relay that demultiplexes streams and bridges to target TCP/UDP endpoints. Enforces a 4096-stream concurrency limit.
 
-**proxy**: Transparent proxy manager. Sets up TUN interface, routing rules, and launches client with a built-in TUN forwarder.
+**proxy**: Transparent proxy manager. Sets up TUN interface, routing rules, and launches the client with a built-in TUN forwarder.
 
 ## Protocol
 
@@ -129,8 +130,11 @@ Custom framing on top of WebSocket binary messages:
 | 0x03 | TCP_DATA | both | Payload data |
 | 0x04 | TCP_FIN | C→S | Stream closed |
 | 0x05 | UDP_DATA | C→S | UDP packet |
+| 0x06 | ICMP_DATA | C→S | ICMP echo request/response |
 
 UDP payload: `[2B host_len][host bytes][2B port][data]`
+
+ICMP payload: `[2B ip_len][ip string][icmp_data]`
 
 ## TUN Mode
 
@@ -161,11 +165,12 @@ Run with administrator privileges:
 
 ## Requirements
 
-- Rust 1.75+
+- Rust 1.85+ (edition 2024)
 - For TUN mode:
   - Linux: TUN/TAP support, iproute2, sudo access
   - macOS: sudo access, utun interface support (macOS 10.13+)
   - Windows: Administrator privileges, wintun.dll (included in release)
+- For ICMP passthrough on the server: `CAP_NET_RAW` or root (Linux)
 
 ## License
 
