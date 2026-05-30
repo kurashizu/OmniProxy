@@ -31,6 +31,40 @@ async fn main() -> Result<()> {
 
     info!("[main] entering main loop");
 
+    let shutdown = wait_shutdown_signal();
+    tokio::pin!(shutdown);
+
+    tokio::select! {
+        _ = run_loop(cfg, stats) => {}
+        _ = shutdown => {
+            info!("[main] received shutdown signal");
+        }
+    }
+
+    info!("[main] exiting");
+    Ok(())
+}
+
+async fn wait_shutdown_signal() {
+    let ctrl_c = tokio::signal::ctrl_c();
+
+    #[cfg(unix)]
+    {
+        let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed to register SIGTERM handler");
+        tokio::select! {
+            _ = ctrl_c => {}
+            _ = sigterm.recv() => {}
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = ctrl_c.await;
+    }
+}
+
+async fn run_loop(cfg: Arc<config::Config>, stats: Arc<admin::ProxyStats>) -> Result<()> {
     loop {
         info!("[main] detecting physical route");
         let outbound_ip = match network::detect_physical_route(&cfg) {

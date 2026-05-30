@@ -83,7 +83,7 @@ pub async fn run_stack(cfg: Arc<Config>, outbound_ip: IpAddr, stats: Arc<ProxySt
     *stats.tun_ip.write().await = cfg.tun_ip.clone();
 
     info!("[stack] waiting for SOCKS5 port to be ready");
-    wait_for_socks(cfg.socks_port, Duration::from_secs(5))
+    wait_for_socks(cfg.socks_port, Duration::from_secs(15))
         .await
         .context("wait for SOCKS5 ready")?;
 

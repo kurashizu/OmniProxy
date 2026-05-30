@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tracing::{debug, info};
@@ -14,20 +14,21 @@ use crate::{config::Config, mux::Mux, socks5::handle};
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // 1) Runtime init.
     bootstrap::init();
 
-    // 2) Load CLI / config file.
     let cfg = Config::load()?;
 
-    // 3) Connect to remote, establish mux, and start reconnect loop.
+    let bind = format!("{}:{}", cfg.addr, cfg.port);
+    let listener = TcpListener::bind(&bind).await
+        .with_context(|| format!("failed to bind SOCKS5 on {bind}"))?;
+    info!("SOCKS5 listening on {bind}");
+
     let mux = Mux::connect_mux(&cfg).await?;
 
-    // 4) Start admin HTTP server.
     start_admin(mux.clone(), &cfg);
 
-    // 5) Listen on local SOCKS5 and forward requests via mux.
-    run_client(cfg, mux).await
+    info!("connected to {}", cfg.server);
+    run_client(cfg, mux, listener).await
 }
 
 fn start_admin(mux: Arc<Mux>, cfg: &Config) {
@@ -37,13 +38,8 @@ fn start_admin(mux: Arc<Mux>, cfg: &Config) {
     });
 }
 
-async fn run_client(cfg: Config, mux: Arc<Mux>) -> Result<()> {
-    // Local SOCKS5 listen address.
-    let bind = format!("{}:{}", cfg.addr, cfg.port);
-
-    // Accept local client connections, each handled independently.
-    let listener = TcpListener::bind(&bind).await?;
-    info!("listening on {bind} → {}", cfg.server);
+async fn run_client(cfg: Config, mux: Arc<Mux>, listener: TcpListener) -> Result<()> {
+    info!("listening on {}:{} → {}", cfg.addr, cfg.port, cfg.server);
     loop {
         let (stream, peer) = listener.accept().await?;
         debug!(peer = %peer, "accepted");
