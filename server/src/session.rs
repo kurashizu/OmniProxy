@@ -148,9 +148,20 @@ pub(crate) async fn handle_socket(socket: WebSocket) {
                                 warn!(stream_id, "icmp: handler receiver dropped");
                             }
                         } else {
-                            // First frame: payload is raw target string (the "connect" request)
-                            let target = String::from_utf8_lossy(&payload).to_string();
-                            debug!("[ICMP→] {target} sid={stream_id}");
+                            // First frame: payload should be target IP string
+                            let target_str = match std::str::from_utf8(&payload) {
+                                Ok(s) => s.trim().to_string(),
+                                Err(_) => {
+                                    debug!(stream_id, len = payload.len(), "icmp: ignoring binary data for unknown stream");
+                                    continue;
+                                }
+                            };
+                            if target_str.parse::<std::net::SocketAddr>().is_err() {
+                                debug!(stream_id, "icmp: ignoring invalid target: {}", target_str.chars().take(20).collect::<String>());
+                                continue;
+                            }
+
+                            debug!("[ICMP→] {target_str} sid={stream_id}");
 
                             let permit = match max_streams.clone().try_acquire_owned() {
                                 Ok(p) => p,
@@ -165,7 +176,7 @@ pub(crate) async fn handle_socket(socket: WebSocket) {
                             let sm = icmp_streams.clone();
                             tokio::spawn(async move {
                                 let _permit = permit;
-                                icmp::run(stream_id, target, rx, ftx).await;
+                                icmp::run(stream_id, target_str, rx, ftx).await;
                                 sm.remove(&stream_id);
                             });
                             icmp_streams.insert(stream_id, tx.clone());
