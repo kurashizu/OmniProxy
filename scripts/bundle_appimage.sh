@@ -1,11 +1,12 @@
 #!/bin/bash
 # Creates an AppImage for the GUI binary.
-# Usage: ./scripts/bundle_appimage.sh [target-dir]
-#        (defaults to ./target/release)
+# Usage: ./scripts/bundle_appimage.sh [target-dir] [icon-path]
+#        (defaults to ./target/release and gui/icon.png)
 
 set -euo pipefail
 
 TARGET_DIR="${1:-target/release}"
+ICON_PATH="${2:-gui/icon.png}"
 BINARY="$TARGET_DIR/gui"
 APP_DIR="$TARGET_DIR/OmniProxy.AppDir"
 
@@ -31,9 +32,21 @@ Categories=Network;Utility;
 Terminal=false
 EOF
 
-# ── 1x1 transparent PNG icon (placeholder) ─────────────────────────
-printf '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\x0bIDATx\x9cc\xf8\x0f\x00\x00\x01\x01\x00\x05\x18\xd8N\x00\x00\x00\x00IEND\xae\x42\x60\x82' \
-    > "$APP_DIR/omniproxy-gui.png"
+# ── Icon ────────────────────────────────────────────────────────────
+if [ -f "$ICON_PATH" ]; then
+    # AppImage expects 256x256 PNG
+    if command -v sips &>/dev/null; then
+        sips -z 256 256 "$ICON_PATH" --out "$APP_DIR/omniproxy-gui.png" >/dev/null
+    elif command -v convert &>/dev/null; then
+        convert "$ICON_PATH" -resize 256x256 "$APP_DIR/omniproxy-gui.png"
+    else
+        cp "$ICON_PATH" "$APP_DIR/omniproxy-gui.png"
+    fi
+else
+    echo "Warning: icon not found at $ICON_PATH, using placeholder"
+    printf '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\x0bIDATx\x9cc\xf8\x0f\x00\x00\x01\x01\x00\x05\x18\xd8N\x00\x00\x00\x00IEND\xae\x42\x60\x82' \
+        > "$APP_DIR/omniproxy-gui.png"
+fi
 
 # ── Download & extract appimagetool (no FUSE needed) ───────────────
 TOOL_DIR="$TARGET_DIR/appimagetool-extracted"
@@ -48,8 +61,9 @@ if [ ! -f "$TOOL_DIR/AppRun" ]; then
 fi
 
 # ── Package ─────────────────────────────────────────────────────────
-OUTPUT="$TARGET_DIR/OmniProxy-Dashboard-x86_64.AppImage"
-ARCH=x86_64 "$TOOL_DIR/AppRun" "$APP_DIR" "$OUTPUT"
+ARCH=$(uname -m)
+OUTPUT="$TARGET_DIR/OmniProxy-Dashboard-${ARCH}.AppImage"
+ARCH=$ARCH "$TOOL_DIR/AppRun" "$APP_DIR" "$OUTPUT"
 
 echo "Created $OUTPUT"
 ls -lh "$OUTPUT"

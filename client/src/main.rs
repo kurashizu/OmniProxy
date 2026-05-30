@@ -3,6 +3,7 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 use tracing::{debug, info};
 
+mod admin;
 mod bootstrap;
 mod config;
 mod mux;
@@ -22,8 +23,18 @@ async fn main() -> Result<()> {
     // 3) Connect to remote, establish mux, and start reconnect loop.
     let mux = Mux::connect_mux(&cfg).await?;
 
-    // 4) Listen on local SOCKS5 and forward requests via mux.
+    // 4) Start admin HTTP server.
+    start_admin(mux.clone(), &cfg);
+
+    // 5) Listen on local SOCKS5 and forward requests via mux.
     run_client(cfg, mux).await
+}
+
+fn start_admin(mux: Arc<Mux>, cfg: &Config) {
+    let port = cfg.admin_port;
+    tokio::spawn(async move {
+        admin::serve(mux, port).await;
+    });
 }
 
 async fn run_client(cfg: Config, mux: Arc<Mux>) -> Result<()> {

@@ -24,6 +24,9 @@ struct Cli {
     #[arg(long, short)]
     /// Load settings from a YAML config file.
     config: Option<String>,
+    #[arg(long, default_value = "10990")]
+    /// Admin HTTP API port.
+    admin_port: u16,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -38,6 +41,8 @@ pub struct Config {
     pub server: String,
     #[serde(default)]
     pub outbound_ip: Option<String>,
+    #[serde(default = "default_admin_port")]
+    pub admin_port: u16,
 }
 
 fn default_addr() -> String {
@@ -46,6 +51,10 @@ fn default_addr() -> String {
 
 fn default_port() -> u16 {
     1080
+}
+
+fn default_admin_port() -> u16 {
+    10990
 }
 
 impl Config {
@@ -63,6 +72,7 @@ impl Config {
                 token: cli.token,
                 server,
                 outbound_ip: cli.outbound_ip,
+                admin_port: cli.admin_port,
             }),
             (None, None) => anyhow::bail!("Either --config or --server must be provided"),
         }

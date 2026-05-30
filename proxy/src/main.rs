@@ -1,3 +1,4 @@
+mod admin;
 mod config;
 mod forwarder;
 mod network;
@@ -25,6 +26,9 @@ async fn main() -> Result<()> {
     info!("[main] loading config");
     let cfg = Arc::new(config::Config::load(&cli)?);
 
+    let stats = admin::ProxyStats::new();
+    tokio::spawn(admin::serve(stats.clone(), cfg.admin_port));
+
     info!("[main] entering main loop");
 
     loop {
@@ -41,7 +45,7 @@ async fn main() -> Result<()> {
         info!("[main] physical route detected: ip={}", outbound_ip);
 
         info!("[main] starting stack");
-        let result = stack::run_stack(cfg.clone(), outbound_ip).await;
+        let result = stack::run_stack(cfg.clone(), outbound_ip, stats.clone()).await;
 
         match result {
             Ok(()) => {

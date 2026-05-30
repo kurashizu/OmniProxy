@@ -63,6 +63,10 @@ pub struct Cli {
     /// Manual: outbound IP for client binding
     #[arg(long, short = 'o')]
     pub phys_ip: Option<String>,
+
+    /// Admin HTTP API port
+    #[arg(long, default_value = "10991")]
+    pub admin_port: u16,
 }
 
 // Config structure for YAML / CLI.
@@ -88,10 +92,16 @@ pub struct Config {
     #[serde(default = "default_tun_gw6")]
     pub tun_gw6: String,
     pub phys_ip: Option<String>,
+    #[serde(default = "default_admin_port")]
+    pub admin_port: u16,
 }
 
 fn default_socks_port() -> u16 {
     1080
+}
+
+fn default_admin_port() -> u16 {
+    10991
 }
 
 fn tun_name_default() -> String {
@@ -182,6 +192,7 @@ impl Config {
             tun_gw,
             tun_gw6,
             phys_ip: cli.phys_ip.clone(),
+            admin_port: cli.admin_port,
         })
     }
 }

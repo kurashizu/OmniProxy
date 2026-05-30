@@ -1,9 +1,9 @@
 use anyhow::{Context, Result};
 use futures_util::{SinkExt, StreamExt};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, oneshot, RwLock};
 use tokio_tungstenite::tungstenite::Message;
 use tracing::{debug, info, warn};
@@ -16,12 +16,56 @@ use protocol::{
     TYPE_TCP_FIN, TYPE_UDP_DATA,
 };
 
+#[derive(Clone)]
+pub(crate) struct StreamMeta {
+    pub id: u32,
+    pub protocol: &'static str,
+    pub target: String,
+    pub source: String,
+    pub started_at: Instant,
+}
+
+impl StreamMeta {
+    fn tcp(id: u32, target: String, source: String) -> Self {
+        Self { id, protocol: "TCP", target, source, started_at: Instant::now() }
+    }
+
+    fn udp(id: u32, source: String) -> Self {
+        Self { id, protocol: "UDP", target: String::new(), source, started_at: Instant::now() }
+    }
+
+    fn icmp(id: u32, target: String, source: String) -> Self {
+        Self { id, protocol: "ICMP", target, source, started_at: Instant::now() }
+    }
+}
+
+pub(crate) struct Stats {
+    pub started_at: Instant,
+    pub ws_connected: AtomicBool,
+    pub reconnect_count: AtomicU64,
+    pub bytes_tx: AtomicU64,
+    pub bytes_rx: AtomicU64,
+}
+
+impl Stats {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self {
+            started_at: Instant::now(),
+            ws_connected: AtomicBool::new(false),
+            reconnect_count: AtomicU64::new(0),
+            bytes_tx: AtomicU64::new(0),
+            bytes_rx: AtomicU64::new(0),
+        })
+    }
+}
+
 pub(crate) struct MuxInner {
     streams: HashMap<u32, mpsc::Sender<bytes::Bytes>>,
     connect_notify: HashMap<u32, oneshot::Sender<Result<()>>>,
     udp_txs: HashMap<u32, mpsc::Sender<(String, u16, bytes::Bytes)>>,
     icmp_txs: HashMap<u32, mpsc::Sender<(String, bytes::Bytes)>>,
     frame_tx: Option<mpsc::Sender<bytes::Bytes>>,
+    stream_info: HashMap<u32, StreamMeta>,
 }
 
 impl MuxInner {
@@ -32,6 +76,7 @@ impl MuxInner {
             udp_txs: HashMap::new(),
             icmp_txs: HashMap::new(),
             frame_tx: None,
+            stream_info: HashMap::new(),
         }
     }
 
@@ -41,6 +86,25 @@ impl MuxInner {
         self.udp_txs.clear();
         self.icmp_txs.clear();
         self.frame_tx = None;
+        self.stream_info.clear();
+    }
+
+    pub(crate) fn stream_count(&self) -> usize {
+        self.streams.len()
+    }
+
+    pub(crate) fn udp_count(&self) -> usize {
+        self.udp_txs.len()
+    }
+
+    pub(crate) fn icmp_count(&self) -> usize {
+        self.icmp_txs.len()
+    }
+
+    pub(crate) fn connections_snapshot(&self) -> Vec<StreamMeta> {
+        let mut list: Vec<_> = self.stream_info.values().cloned().collect();
+        list.sort_by_key(|s| std::cmp::Reverse(s.id));
+        list
     }
 }
 
@@ -49,6 +113,7 @@ pub(crate) struct Mux {
     inner: RwLock<MuxInner>,
     /// Current config (includes server URL and outbound_ip)
     cfg: Config,
+    stats: Arc<Stats>,
 }
 
 impl Mux {
@@ -57,7 +122,20 @@ impl Mux {
             next_id: AtomicU32::new(1),
             inner: RwLock::new(MuxInner::new()),
             cfg,
+            stats: Stats::new(),
         }
+    }
+
+    pub(crate) fn stats(&self) -> &Arc<Stats> {
+        &self.stats
+    }
+
+    pub(crate) fn inner(&self) -> &RwLock<MuxInner> {
+        &self.inner
+    }
+
+    pub(crate) fn config(&self) -> &Config {
+        &self.cfg
     }
 
     pub(crate) async fn connect_mux(cfg: &Config) -> Result<Arc<Self>> {
@@ -76,10 +154,13 @@ impl Mux {
     }
 
     async fn send_frame(&self, frame: bytes::Bytes) -> Result<()> {
+        let len = frame.len() as u64;
         let tx = self.frame_tx().await.context("ws not connected")?;
         tx.send(frame)
             .await
-            .map_err(|_| anyhow::anyhow!("ws writer closed"))
+            .map_err(|_| anyhow::anyhow!("ws writer closed"))?;
+        self.stats.bytes_tx.fetch_add(len, Ordering::Relaxed);
+        Ok(())
     }
 
     /// Establish WS connection. If outbound_ip bind fails (e.g. network change
@@ -110,6 +191,7 @@ impl Mux {
             ws_tx.close().await.ok();
         });
 
+        self.stats.ws_connected.store(true, Ordering::Relaxed);
         {
             self.inner.write().await.frame_tx = Some(frame_tx);
         }
@@ -135,6 +217,7 @@ impl Mux {
         loop {
             match ws_rx.next().await {
                 Some(Ok(Message::Binary(data))) => {
+                    self.stats.bytes_rx.fetch_add(data.len() as u64, Ordering::Relaxed);
                     let (id, typ, payload) = match decode_frame(data) {
                         Ok(v) => v,
                         Err(e) => {
@@ -166,7 +249,9 @@ impl Mux {
                             }
                         }
                         TYPE_TCP_FIN => {
-                            self.inner.write().await.streams.remove(&id);
+                            let mut inner = self.inner.write().await;
+                            inner.streams.remove(&id);
+                            inner.stream_info.remove(&id);
                         }
                         TYPE_UDP_DATA => {
                             let tx = {
@@ -208,6 +293,7 @@ impl Mux {
                 _ => {}
             }
         }
+        self.stats.ws_connected.store(false, Ordering::Relaxed);
         writer.abort();
         self.inner.write().await.clear();
     }
@@ -227,6 +313,7 @@ impl Mux {
         {
             let mut inner = self.inner.write().await;
             inner.streams.insert(id, data_tx);
+            inner.stream_info.insert(id, StreamMeta::tcp(id, target.to_owned(), String::new()));
             inner.connect_notify.insert(id, conn_tx);
         }
         self.send_frame(encode_frame(id, TYPE_TCP_CONNECT, target.as_bytes()))
@@ -244,18 +331,24 @@ impl Mux {
         self.send_frame(encode_frame(id, TYPE_TCP_FIN, &[]))
             .await
             .ok();
-        self.inner.write().await.streams.remove(&id);
+        let mut inner = self.inner.write().await;
+        inner.streams.remove(&id);
+        inner.stream_info.remove(&id);
     }
 
     pub(crate) async fn register_udp(&self) -> (u32, mpsc::Receiver<(String, u16, bytes::Bytes)>) {
         let id = self.alloc_id();
         let (tx, rx) = mpsc::channel(256);
-        self.inner.write().await.udp_txs.insert(id, tx);
+        let mut inner = self.inner.write().await;
+        inner.udp_txs.insert(id, tx);
+        inner.stream_info.insert(id, StreamMeta::udp(id, String::new()));
         (id, rx)
     }
 
     pub(crate) async fn unregister_udp(&self, id: u32) {
-        self.inner.write().await.udp_txs.remove(&id);
+        let mut inner = self.inner.write().await;
+        inner.udp_txs.remove(&id);
+        inner.stream_info.remove(&id);
     }
 
     pub(crate) async fn udp_send(&self, stream_id: u32, host: &str, port: u16, data: &[u8]) -> Result<()> {
@@ -279,6 +372,7 @@ impl Mux {
         {
             let mut inner = self.inner.write().await;
             inner.icmp_txs.insert(id, tx);
+            inner.stream_info.insert(id, StreamMeta::icmp(id, target.to_owned(), String::new()));
             inner.connect_notify.insert(id, conn_tx);
         }
         self.send_frame(encode_frame(id, TYPE_ICMP_DATA, target.as_bytes()))
@@ -292,7 +386,9 @@ impl Mux {
     }
 
     pub(crate) async fn icmp_unregister(&self, id: u32) {
-        self.inner.write().await.icmp_txs.remove(&id);
+        let mut inner = self.inner.write().await;
+        inner.icmp_txs.remove(&id);
+        inner.stream_info.remove(&id);
     }
 }
 
@@ -309,6 +405,7 @@ fn spawn_reconnect_loop(mux: Arc<Mux>, mut disc_rx: oneshot::Receiver<()>) {
                 match mux.connect().await {
                     Ok(new_disc) => {
                         info!("reconnected");
+                        mux.stats.reconnect_count.fetch_add(1, Ordering::Relaxed);
                         disc_rx = new_disc;
                         delay = Duration::from_secs(1);
                         break;

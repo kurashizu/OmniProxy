@@ -6,6 +6,7 @@ on:
             - "v*"
 
 jobs:
+    # ── Build CLI ─────────────────────────────────────────────────────
     build:
         strategy:
             matrix:
@@ -13,37 +14,36 @@ jobs:
                     - target: x86_64-pc-windows-msvc
                       os: windows-latest
                       ext: .exe
-                      zip: omni-proxy-windows-x86_64-msvc.zip
+                      name: windows-x86_64
 
                     - target: aarch64-pc-windows-msvc
                       os: windows-11-arm
                       ext: .exe
-                      zip: omni-proxy-windows-aarch64-msvc.zip
+                      name: windows-aarch64
 
                     - target: x86_64-unknown-linux-musl
                       os: ubuntu-latest
                       ext: ""
-                      zip: omni-proxy-linux-x86_64-musl.tar.xz
+                      name: linux-x86_64
 
                     - target: aarch64-unknown-linux-musl
                       os: ubuntu-24.04-arm
                       ext: ""
-                      zip: omni-proxy-linux-aarch64-musl.tar.xz
+                      name: linux-aarch64
 
                     - target: x86_64-apple-darwin
                       os: macos-latest
                       ext: ""
-                      zip: omni-proxy-macos-x86_64.tar.xz
+                      name: macos-x86_64
 
                     - target: aarch64-apple-darwin
                       os: macos-latest
                       ext: ""
-                      zip: omni-proxy-macos-aarch64.tar.xz
+                      name: macos-aarch64
 
         runs-on: ${{ matrix.os }}
 
         steps:
-            # ── Setup ────────────────────────────────────────────────────────────────
             - uses: actions/checkout@v6
 
             - name: Install Rust
@@ -53,7 +53,7 @@ jobs:
 
             - name: Install musl tools
               if: startsWith(matrix.os, 'ubuntu')
-              run: sudo apt-get update && sudo apt-get install -y musl-tools zip unzip
+              run: sudo apt-get update && sudo apt-get install -y musl-tools
               shell: bash
 
             - name: Cache cargo
@@ -61,25 +61,18 @@ jobs:
               with:
                   workspaces: "."
 
-            # ── Build ───────────────────────────────────────────────────────────────
-            - name: Build all
+            - name: Build CLI
               env:
                   RUSTFLAGS: ${{ startsWith(matrix.os, 'windows') && '-Ctarget-feature=+crt-static' || '' }}
-              run: |
-                  cargo build -p client -p server -p proxy --release --target ${{ matrix.target }}
-                  mkdir -p dist
-                  cp target/${{ matrix.target }}/release/client${{ matrix.ext }} dist/
-                  cp target/${{ matrix.target }}/release/server${{ matrix.ext }} dist/
-                  cp target/${{ matrix.target }}/release/proxy${{ matrix.ext }} dist/
+              run: cargo build -p client -p server -p proxy --release --target ${{ matrix.target }}
               shell: bash
 
-            # Ad-hoc sign macOS binaries so Gatekeeper doesn't block them on first run
             - name: Ad-hoc sign (macOS)
               if: matrix.os == 'macos-latest'
               run: |
-                  codesign --force --sign - dist/client
-                  codesign --force --sign - dist/server
-                  codesign --force --sign - dist/proxy
+                  codesign --force --sign - target/${{ matrix.target }}/release/client
+                  codesign --force --sign - target/${{ matrix.target }}/release/server
+                  codesign --force --sign - target/${{ matrix.target }}/release/proxy
               shell: bash
 
             - name: Download wintun (Windows)
@@ -87,72 +80,237 @@ jobs:
               continue-on-error: true
               run: |
                   curl.exe -sL https://www.wintun.net/builds/wintun-0.14.1.zip -o wintun.zip
-
                   Expand-Archive -Force wintun.zip -DestinationPath .
-
                   if ("${{ matrix.target }}" -eq "x86_64-pc-windows-msvc") {
-                      $dll = Get-ChildItem `
-                          -Recurse `
-                          -Path */bin/amd64/wintun.dll |
-                          Select-Object -First 1 -ExpandProperty FullName
+                      $dll = Get-ChildItem -Recurse -Path */bin/amd64/wintun.dll | Select-Object -First 1 -ExpandProperty FullName
+                  } elseif ("${{ matrix.target }}" -eq "aarch64-pc-windows-msvc") {
+                      $dll = Get-ChildItem -Recurse -Path */bin/arm64/wintun.dll | Select-Object -First 1 -ExpandProperty FullName
                   }
-
-                  elseif ("${{ matrix.target }}" -eq "aarch64-pc-windows-msvc") {
-                      $dll = Get-ChildItem `
-                          -Recurse `
-                          -Path */bin/arm64/wintun.dll |
-                          Select-Object -First 1 -ExpandProperty FullName
-                  }
-
-                  cp $dll dist/
-
+                  cp $dll target/${{ matrix.target }}/release/
               shell: powershell
 
-            # ── Smoke test ─────────────────────────────────────────────────────────
             - name: Smoke test
               run: |
-                  ./dist/client${{ matrix.ext }} --version
-                  ./dist/server${{ matrix.ext }} --version
-                  ./dist/proxy${{ matrix.ext }} --version
+                  ./target/${{ matrix.target }}/release/client${{ matrix.ext }} --version
+                  ./target/${{ matrix.target }}/release/server${{ matrix.ext }} --version
+                  ./target/${{ matrix.target }}/release/proxy${{ matrix.ext }} --version
               shell: bash
 
-            # ── Package ──────────────────────────────────────────────────────────────
-            - name: Package Linux
-              if: startsWith(matrix.os, 'ubuntu')
-              run: |
-                  cp README.md dist/ || true
-                  cp proxy/config.linux.yml dist/config.yml || true
-                  tar -cJf ${{ matrix.zip }} dist/
-              shell: bash
-
-            - name: Package macOS
-              if: matrix.os == 'macos-latest'
-              run: |
-                  cp README.md dist/ || true
-                  cp proxy/config.macos.yml dist/config.yml || true
-                  cp scripts/setup_macos.sh dist/
-                  tar -cJf ${{ matrix.zip }} dist/
-              shell: bash
-
-            - name: Package Windows
-              if: startsWith(matrix.os, 'windows')
-              run: |
-                  if (Test-Path README.md) { cp README.md dist/ }
-                  cp proxy/config.windows.yml dist/config.yml
-                  Compress-Archive -Path dist -DestinationPath ${{ matrix.zip }}
-              shell: powershell
-
-            # ── Upload ──────────────────────────────────────────────────────────────
-            - name: Upload assets
+            - name: Upload CLI artifacts
               uses: actions/upload-artifact@v7
               with:
-                  name: ${{ matrix.zip }}
-                  path: ${{ matrix.zip }}
+                  name: cli-${{ matrix.name }}
+                  path: |
+                      target/${{ matrix.target }}/release/client${{ matrix.ext }}
+                      target/${{ matrix.target }}/release/server${{ matrix.ext }}
+                      target/${{ matrix.target }}/release/proxy${{ matrix.ext }}
+                      target/${{ matrix.target }}/release/wintun.dll
+                  if-no-files-found: error
                   retention-days: 2
 
-    # ── Release ────────────────────────────────────────────────────────────────
+    # ── Build GUI ─────────────────────────────────────────────────────
+    build-gui:
+        strategy:
+            matrix:
+                include:
+                    - target: x86_64-pc-windows-msvc
+                      os: windows-latest
+                      ext: .exe
+                      name: windows-x86_64
+
+                    - target: aarch64-pc-windows-msvc
+                      os: windows-11-arm
+                      ext: .exe
+                      name: windows-aarch64
+
+                    - target: x86_64-unknown-linux-gnu
+                      os: ubuntu-latest
+                      ext: ""
+                      name: linux-x86_64
+
+                    - target: aarch64-unknown-linux-gnu
+                      os: ubuntu-24.04-arm
+                      ext: ""
+                      name: linux-aarch64
+
+                    - target: x86_64-apple-darwin
+                      os: macos-latest
+                      ext: ""
+                      name: macos-x86_64
+
+                    - target: aarch64-apple-darwin
+                      os: macos-latest
+                      ext: ""
+                      name: macos-aarch64
+
+        runs-on: ${{ matrix.os }}
+
+        steps:
+            - uses: actions/checkout@v6
+
+            - name: Install Rust
+              uses: dtolnay/rust-toolchain@stable
+              with:
+                  targets: ${{ matrix.target }}
+
+            - name: Install system dependencies (Linux)
+              if: startsWith(matrix.name, 'linux')
+              run: |
+                  sudo apt-get update
+                  sudo apt-get install -y \
+                      libxcb-shape0-dev libxcb-xfixes0-dev \
+                      libxcb1-dev libxkbcommon-dev \
+                      libgl1-mesa-dev libegl1-mesa-dev \
+                      fuse libfuse2
+              shell: bash
+
+            - name: Cache cargo
+              uses: Swatinem/rust-cache@v2
+              with:
+                  workspaces: "."
+
+            - name: Build GUI
+              run: cargo build -p gui --release --target ${{ matrix.target }}
+              shell: bash
+
+            - name: Ad-hoc sign (macOS)
+              if: matrix.os == 'macos-latest'
+              run: codesign --force --sign - target/${{ matrix.target }}/release/gui
+              shell: bash
+
+            - name: Bundle .app (macOS)
+              if: matrix.os == 'macos-latest'
+              run: bash scripts/bundle_gui.sh target/${{ matrix.target }}/release gui/icon.png
+
+            - name: Bundle AppImage (Linux x86_64)
+              if: matrix.name == 'linux-x86_64'
+              run: bash scripts/bundle_appimage.sh target/${{ matrix.target }}/release gui/icon.png
+              shell: bash
+
+            - name: Upload GUI artifacts
+              uses: actions/upload-artifact@v7
+              with:
+                  name: gui-${{ matrix.name }}
+                  path: |
+                      target/${{ matrix.target }}/release/gui${{ matrix.ext }}
+                      target/${{ matrix.target }}/release/*.app/
+                      target/${{ matrix.target }}/release/*.AppImage
+                  if-no-files-found: error
+                  retention-days: 2
+
+    # ── Package ───────────────────────────────────────────────────────
+    package:
+        needs: [build, build-gui]
+        strategy:
+            matrix:
+                include:
+                    - name: windows-x86_64
+                      archive: omni-proxy-windows-x86_64-msvc.zip
+                      ext: .exe
+                      config: proxy/config.windows.yml
+                      platform: windows
+
+                    - name: windows-aarch64
+                      archive: omni-proxy-windows-aarch64-msvc.zip
+                      ext: .exe
+                      config: proxy/config.windows.yml
+                      platform: windows
+
+                    - name: linux-x86_64
+                      archive: omni-proxy-linux-x86_64.tar.xz
+                      ext: ""
+                      config: proxy/config.linux.yml
+                      platform: linux
+
+                    - name: linux-aarch64
+                      archive: omni-proxy-linux-aarch64.tar.xz
+                      ext: ""
+                      config: proxy/config.linux.yml
+                      platform: linux
+
+                    - name: macos-x86_64
+                      archive: omni-proxy-macos-x86_64.tar.xz
+                      ext: ""
+                      config: proxy/config.macos.yml
+                      platform: macos
+
+                    - name: macos-aarch64
+                      archive: omni-proxy-macos-aarch64.tar.xz
+                      ext: ""
+                      config: proxy/config.macos.yml
+                      platform: macos
+
+        runs-on: ubuntu-latest
+
+        steps:
+            - uses: actions/checkout@v6
+
+            - name: Download CLI artifacts
+              uses: actions/download-artifact@v8
+              with:
+                  name: cli-${{ matrix.name }}
+                  path: cli
+                  merge-multiple: true
+
+            - name: Download GUI artifacts
+              uses: actions/download-artifact@v8
+              with:
+                  name: gui-${{ matrix.name }}
+                  path: gui-art
+                  merge-multiple: true
+
+            - name: Assemble dist
+              run: |
+                  mkdir -p dist
+
+                  # CLI binaries
+                  cp cli/client${{ matrix.ext }} dist/
+                  cp cli/server${{ matrix.ext }} dist/
+                  cp cli/proxy${{ matrix.ext }} dist/
+
+                  # Windows extras
+                  if [ "${{ matrix.platform }}" = "windows" ]; then
+                      cp cli/wintun.dll dist/ 2>/dev/null || true
+                  fi
+
+                  # GUI binary / bundle
+                  if compgen -G "gui-art/*.app" > /dev/null 2>&1; then
+                      cp -r gui-art/*.app dist/
+                  elif compgen -G "gui-art/*.AppImage" > /dev/null 2>&1; then
+                      cp gui-art/*.AppImage dist/
+                  else
+                      cp gui-art/gui${{ matrix.ext }} dist/
+                  fi
+
+                  # Config
+                  cp ${{ matrix.config }} dist/config.yml
+
+                  # macOS extras
+                  if [ "${{ matrix.platform }}" = "macos" ]; then
+                      cp scripts/setup_macos.sh dist/
+                  fi
+
+                  # README
+                  cp README.md dist/ 2>/dev/null || true
+
+            - name: Create archive (tar.xz)
+              if: matrix.platform != 'windows'
+              run: tar -cJf ${{ matrix.archive }} dist/
+
+            - name: Create archive (zip)
+              if: matrix.platform == 'windows'
+              run: zip -r ${{ matrix.archive }} dist/
+
+            - name: Upload archive
+              uses: actions/upload-artifact@v7
+              with:
+                  name: ${{ matrix.archive }}
+                  path: ${{ matrix.archive }}
+                  retention-days: 2
+
+    # ── Release ───────────────────────────────────────────────────────
     release:
-        needs: build
+        needs: package
         runs-on: ubuntu-latest
         permissions:
             contents: write

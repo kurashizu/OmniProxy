@@ -1,10 +1,12 @@
 // Stack management: spawns client + forwarder, manages lifecycle.
 
+use crate::admin::ProxyStats;
 use crate::config::Config;
 use crate::forwarder;
 use crate::forwarder::Forwarder;
 use anyhow::{Context, Result};
 use std::net::IpAddr;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tokio::net::TcpStream;
 use tokio::process::{Child, Command};
@@ -57,7 +59,7 @@ async fn wait_for_socks(port: u16, deadline: Duration) -> Result<()> {
     );
 }
 
-pub async fn run_stack(cfg: Arc<Config>, outbound_ip: IpAddr) -> Result<()> {
+pub async fn run_stack(cfg: Arc<Config>, outbound_ip: IpAddr, stats: Arc<ProxyStats>) -> Result<()> {
     info!("[stack] outbound IP: {}", outbound_ip);
 
     info!("[stack] spawning client");
@@ -71,7 +73,14 @@ pub async fn run_stack(cfg: Arc<Config>, outbound_ip: IpAddr) -> Result<()> {
     client_args.push(outbound_ip.to_string());
     client_args.extend(["--token".to_string(), cfg.token.clone()]);
     let mut client = spawn(&cfg.client, &client_args, "client").context("spawn client")?;
-    info!("[stack] client started (pid {})", client.id().unwrap_or(0));
+    let pid = client.id().unwrap_or(0);
+    info!("[stack] client started (pid {})", pid);
+
+    stats.client_alive.store(true, Ordering::Relaxed);
+    stats.client_pid.store(pid, Ordering::Relaxed);
+    *stats.socks_port.write().await = cfg.socks_port;
+    *stats.tun_name.write().await = cfg.tun_name.clone();
+    *stats.tun_ip.write().await = cfg.tun_ip.clone();
 
     info!("[stack] waiting for SOCKS5 port to be ready");
     wait_for_socks(cfg.socks_port, Duration::from_secs(5))
@@ -80,6 +89,20 @@ pub async fn run_stack(cfg: Arc<Config>, outbound_ip: IpAddr) -> Result<()> {
 
     info!("[stack] creating TUN device and configuring routes");
     let tun_dev = forwarder::tun_up(&cfg).context("tun_up")?;
+
+    let routes = vec![
+        crate::admin::RouteEntry {
+            destination: "0.0.0.0/0".into(),
+            gateway: cfg.tun_gw.clone(),
+            interface: cfg.tun_name.clone(),
+        },
+        crate::admin::RouteEntry {
+            destination: "::/0".into(),
+            gateway: cfg.tun_gw6.clone(),
+            interface: cfg.tun_name.clone(),
+        },
+    ];
+    *stats.routes.write().await = routes;
 
     info!("[stack] creating forwarder");
     let mut fwd = Forwarder::new(tun_dev, cfg.socks_port).context("create forwarder")?;
@@ -92,6 +115,7 @@ pub async fn run_stack(cfg: Arc<Config>, outbound_ip: IpAddr) -> Result<()> {
 
     info!("[stack] tearing down");
     fwd.shutdown();
+    stats.client_alive.store(false, Ordering::Relaxed);
     kill_quiet(&mut client).await;
     forwarder::tun_down(&cfg);
     info!("[stack] teardown complete");
