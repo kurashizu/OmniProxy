@@ -64,9 +64,10 @@ pub(crate) async fn run(
     };
 
     // recv raw ICMP → encode source IP → send to mux
-    // With SOCK_RAW, recv returns the full IP packet. We need to strip the IP header.
-    // Only forward echo replies (type 0) from the target host.
+    // IPv4 SOCK_RAW: recv includes IP header, must strip it.
+    // IPv6 SOCK_RAW: recv does NOT include IPv6 header, only ICMPv6 payload.
     let target_ip = target_addr.ip();
+    let is_v6 = target_ip.is_ipv6();
     let recv_sock = sock.clone();
     let recv_tx = frame_tx.clone();
     let recv_task = tokio::spawn(async move {
@@ -74,20 +75,20 @@ pub(crate) async fn run(
         loop {
             match recv_sock.recv_from(&mut buf).await {
                 Ok((n, src)) => {
-                    if n < 20 {
-                        continue;
-                    }
-                    // Only accept replies from the target IP
                     if src.ip() != target_ip {
                         continue;
                     }
-                    let ihl = ((buf[0] & 0x0F) as usize) * 4;
-                    if n < ihl + 8 {
+                    let (header_len, echo_reply_type) = if is_v6 {
+                        (0, 129u8)
+                    } else {
+                        let ihl = ((buf[0] & 0x0F) as usize) * 4;
+                        (ihl, 0)
+                    };
+                    if n < header_len + 8 {
                         continue;
                     }
-                    let icmp_type = buf[ihl];
-                    // Only forward echo replies (type 0)
-                    if icmp_type != 0 {
+                    let icmp_type = buf[header_len];
+                    if icmp_type != echo_reply_type {
                         debug!(
                             "[icmp] skipping non-echo type={} from {}",
                             icmp_type,
@@ -96,7 +97,7 @@ pub(crate) async fn run(
                         continue;
                     }
                     let src_ip = src.ip().to_string();
-                    let icmp_data = &buf[ihl..n];
+                    let icmp_data = &buf[header_len..n];
                     let payload = encode_icmp_payload(&src_ip, icmp_data);
                     let frame = encode_frame(stream_id, TYPE_ICMP_DATA, &payload);
                     if recv_tx.send(frame).await.is_err() {
