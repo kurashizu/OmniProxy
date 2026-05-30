@@ -50,7 +50,7 @@ impl DashboardApp {
                     }
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let running = self.proxy_handle.as_mut().map_or(false, |h| h.is_alive());
+                        let running = self.ws_connected && !self.tun_name.is_empty();
                         if running {
                             if ui.add(egui::Button::new(
                                 egui::RichText::new("⏹  Stop").size(13.0).color(egui::Color32::WHITE),
@@ -63,7 +63,6 @@ impl DashboardApp {
                                 self.ws_connected = false;
                             }
                         } else {
-                            self.proxy_handle = None;
                             if ui.add(egui::Button::new(
                                 egui::RichText::new("▶  Start").size(13.0).color(egui::Color32::WHITE),
                             ).min_size(egui::vec2(80.0, 28.0))
