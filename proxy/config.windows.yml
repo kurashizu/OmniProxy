@@ -1,7 +1,7 @@
 # ── Core Executable Paths ─────────────────────────────────────────────────────
 # Relative paths targeting Windows executables.
 # Assumes these binaries reside in the same folder as the proxy manager.
-client: "./client.exe"
+client: '.\client.exe'
 
 # ── Remote Server Configuration ───────────────────────────────────────────────
 # The address of your remote outbound proxy server.
