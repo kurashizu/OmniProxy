@@ -30,7 +30,7 @@ impl DashboardApp {
             .frame(egui::Frame::none().inner_margin(egui::Margin { left: 12.0, right: 12.0, top: 8.0, bottom: 4.0 }))
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    let heading_color = if self.ws_connected {
+                    let heading_color = if self.ws_connected && !self.tun_name.is_empty() {
                         egui::Color32::GREEN
                     } else {
                         egui::Color32::from_rgb(180, 100, 100)
