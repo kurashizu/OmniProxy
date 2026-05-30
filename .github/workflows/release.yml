@@ -285,6 +285,9 @@ jobs:
                   # GUI binary / bundle
                   if compgen -G "gui-art/*.app" > /dev/null 2>&1; then
                       cp -r gui-art/*.app dist/
+                      # Embed client/proxy into .app bundle so GUI can find them
+                      cp cli/client dist/*.app/Contents/MacOS/
+                      cp cli/proxy dist/*.app/Contents/MacOS/
                   elif compgen -G "gui-art/*.AppImage" > /dev/null 2>&1; then
                       cp gui-art/*.AppImage dist/
                   else
