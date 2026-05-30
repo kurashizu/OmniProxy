@@ -1,4 +1,5 @@
 use anyhow::{bail, Result};
+use protocol::encode_icmp_payload;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -17,6 +18,7 @@ const METHOD_NONE_ACCEPTABLE: u8 = 0xFF;
 const CMD_CONNECT: u8 = 0x01;
 const CMD_BIND: u8 = 0x02;
 const CMD_UDP_ASSOCIATE: u8 = 0x03;
+const CMD_ICMP: u8 = 0xA1;
 
 const ATYP_IPV4: u8 = 0x01;
 const ATYP_DOMAIN: u8 = 0x03;
@@ -154,6 +156,7 @@ pub async fn handle(mut stream: TcpStream, mux: Arc<Mux>) -> Result<()> {
     match cmd {
         Socks5Cmd::Connect => handle_tcp(stream, target_addr, mux).await,
         Socks5Cmd::UdpAssociate => handle_udp(stream, mux).await,
+        Socks5Cmd::Custom(CMD_ICMP) => handle_icmp(stream, target_addr, mux).await,
         Socks5Cmd::Custom(c) => {
             let dummy: SocketAddr = "0.0.0.0:0".parse().unwrap();
             write_socks5_reply(&mut stream, REP_COMMAND_NOT_SUPPORTED, &dummy)
@@ -310,6 +313,66 @@ async fn handle_udp(mut stream: TcpStream, mux: Arc<Mux>) -> Result<()> {
     }
 
     mux.unregister_udp(stream_id).await;
+    Ok(())
+}
+
+// ── ICMP ──────────────────────────────────────────────────────────────────────
+
+async fn handle_icmp(
+    mut stream: TcpStream,
+    target_addr: TargetAddr,
+    mux: Arc<Mux>,
+) -> Result<()> {
+    let target = target_to_string(&target_addr);
+    debug!(target, "socks5 icmp");
+
+    let (stream_id, mut icmp_rx) = mux.icmp_register().await;
+    let dummy: SocketAddr = "0.0.0.0:0".parse().unwrap();
+    write_socks5_reply(&mut stream, REP_SUCCESS, &dummy).await?;
+
+    let (mut tcp_rd, mut tcp_w) = tokio::io::split(stream);
+    let mux_up = mux.clone();
+
+    let up = async move {
+        loop {
+            let mut len_buf = [0u8; 4];
+            if tcp_rd.read_exact(&mut len_buf).await.is_err() {
+                break;
+            }
+            let len = u32::from_be_bytes(len_buf) as usize;
+            if len == 0 || len > 65535 {
+                break;
+            }
+            let mut icmp = vec![0u8; len];
+            if tcp_rd.read_exact(&mut icmp).await.is_err() {
+                break;
+            }
+            if mux_up
+                .icmp_data(stream_id, bytes::Bytes::from(icmp))
+                .await
+                .is_err()
+            {
+                break;
+            }
+        }
+        mux_up.icmp_unregister(stream_id).await;
+        anyhow::Ok(())
+    };
+
+    let down = async move {
+        while let Some((src_ip, data)) = icmp_rx.recv().await {
+            let frame = encode_icmp_payload(&src_ip, &data);
+            let len = (frame.len() as u32).to_be_bytes();
+            tcp_w.write_all(&len).await?;
+            tcp_w.write_all(&frame).await?;
+        }
+        anyhow::Ok(())
+    };
+
+    tokio::select! {
+        r = up   => { r.ok(); }
+        r = down => { r.ok(); }
+    }
     Ok(())
 }
 

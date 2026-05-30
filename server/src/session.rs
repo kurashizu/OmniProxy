@@ -3,12 +3,14 @@ use bytes::Bytes;
 use dashmap::DashMap;
 use futures_util::{SinkExt, StreamExt};
 use protocol::{
-    decode_frame, decode_udp_payload, TYPE_TCP_CONNECT, TYPE_TCP_DATA, TYPE_TCP_FIN, TYPE_UDP_DATA,
+    decode_frame, decode_icmp_payload, decode_udp_payload, TYPE_ICMP_DATA, TYPE_TCP_CONNECT,
+    TYPE_TCP_DATA, TYPE_TCP_FIN, TYPE_UDP_DATA,
 };
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
+use crate::icmp;
 use crate::tcp;
 use crate::udp;
 
@@ -29,6 +31,7 @@ pub(crate) async fn handle_socket(socket: WebSocket) {
 
     let stream_map: Arc<DashMap<u32, mpsc::Sender<Bytes>>> = Arc::new(DashMap::new());
     let udp_sockets: Arc<DashMap<u32, Arc<tokio::net::UdpSocket>>> = Arc::new(DashMap::new());
+    let icmp_streams: Arc<DashMap<u32, mpsc::Sender<Bytes>>> = Arc::new(DashMap::new());
 
     while let Some(msg) = ws_rx.next().await {
         match msg {
@@ -99,6 +102,36 @@ pub(crate) async fn handle_socket(socket: WebSocket) {
                         Err(e) => warn!("[udp] decode: {e}"),
                     },
 
+                    TYPE_ICMP_DATA => {
+                        // payload format: [u16 target_ip_len][target_ip][icmp_data]
+                        let (target, icmp_data) = match decode_icmp_payload(&payload) {
+                            Ok(v) => v,
+                            Err(e) => {
+                                warn!("[icmp] decode: {e}");
+                                continue;
+                            }
+                        };
+
+                        let tx = if let Some(s) = icmp_streams.get(&stream_id) {
+                            s.clone()
+                        } else {
+                            let (tx, rx) = mpsc::channel::<Bytes>(256);
+                            let ftx = frame_tx.clone();
+                            let sm = icmp_streams.clone();
+                            tokio::spawn(async move {
+                                icmp::run(stream_id, target, rx, ftx).await;
+                                sm.remove(&stream_id);
+                            });
+                            icmp_streams.insert(stream_id, tx.clone());
+                            tx
+                        };
+
+                        // Forward raw ICMP data (target already decoded above)
+                        if tx.send(icmp_data).await.is_err() {
+                            warn!(stream_id, "icmp: handler receiver dropped");
+                        }
+                    }
+
                     _ => warn!("[mux] unknown type {typ:#x} sid={stream_id}"),
                 }
             }
@@ -113,5 +146,6 @@ pub(crate) async fn handle_socket(socket: WebSocket) {
 
     stream_map.clear();
     udp_sockets.clear();
+    icmp_streams.clear();
     info!("[ws] session closed");
 }

@@ -1,4 +1,5 @@
 mod config;
+mod icmp;
 mod session;
 mod tcp;
 mod udp;

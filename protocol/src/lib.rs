@@ -6,6 +6,7 @@ pub const TYPE_TCP_CONNECTED: u8 = 0x02;
 pub const TYPE_TCP_DATA: u8 = 0x03;
 pub const TYPE_TCP_FIN: u8 = 0x04;
 pub const TYPE_UDP_DATA: u8 = 0x05;
+pub const TYPE_ICMP_DATA: u8 = 0x06;
 
 pub fn encode_frame(stream_id: u32, typ: u8, payload: &[u8]) -> Bytes {
     let mut buf = BytesMut::with_capacity(5 + payload.len());
@@ -47,4 +48,26 @@ pub fn decode_udp_payload(payload: &[u8]) -> Result<(String, u16, Bytes)> {
     let port = u16::from_be_bytes([payload[2 + hl], payload[3 + hl]]);
     let data = Bytes::copy_from_slice(&payload[4 + hl..]);
     Ok((host, port, data))
+}
+
+pub fn encode_icmp_payload(ip: &str, data: &[u8]) -> Bytes {
+    let ib = ip.as_bytes();
+    let mut buf = BytesMut::with_capacity(2 + ib.len() + data.len());
+    buf.put_u16(ib.len() as u16);
+    buf.put_slice(ib);
+    buf.put_slice(data);
+    buf.freeze()
+}
+
+pub fn decode_icmp_payload(payload: &[u8]) -> Result<(String, Bytes)> {
+    if payload.len() < 2 {
+        anyhow::bail!("icmp payload too short");
+    }
+    let il = u16::from_be_bytes([payload[0], payload[1]]) as usize;
+    if payload.len() < 2 + il {
+        anyhow::bail!("icmp payload truncated");
+    }
+    let ip = String::from_utf8_lossy(&payload[2..2 + il]).to_string();
+    let data = Bytes::copy_from_slice(&payload[2 + il..]);
+    Ok((ip, data))
 }

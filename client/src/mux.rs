@@ -11,14 +11,15 @@ use tracing::{debug, info, warn};
 use crate::config::Config;
 use crate::ws::build_ws;
 use protocol::{
-    decode_frame, decode_udp_payload, encode_frame, encode_udp_payload, TYPE_TCP_CONNECT,
-    TYPE_TCP_CONNECTED, TYPE_TCP_DATA, TYPE_TCP_FIN, TYPE_UDP_DATA,
+    decode_frame, decode_icmp_payload, decode_udp_payload, encode_frame, encode_udp_payload,
+    TYPE_ICMP_DATA, TYPE_TCP_CONNECT, TYPE_TCP_CONNECTED, TYPE_TCP_DATA, TYPE_TCP_FIN, TYPE_UDP_DATA,
 };
 
 pub(crate) struct MuxInner {
     streams: HashMap<u32, mpsc::Sender<bytes::Bytes>>,
     connect_notify: HashMap<u32, oneshot::Sender<Result<()>>>,
     udp_txs: HashMap<u32, mpsc::Sender<(String, u16, bytes::Bytes)>>,
+    icmp_txs: HashMap<u32, mpsc::Sender<(String, bytes::Bytes)>>,
     frame_tx: Option<mpsc::Sender<bytes::Bytes>>,
 }
 
@@ -28,6 +29,7 @@ impl MuxInner {
             streams: HashMap::new(),
             connect_notify: HashMap::new(),
             udp_txs: HashMap::new(),
+            icmp_txs: HashMap::new(),
             frame_tx: None,
         }
     }
@@ -36,6 +38,7 @@ impl MuxInner {
         self.streams.clear();
         self.connect_notify.clear();
         self.udp_txs.clear();
+        self.icmp_txs.clear();
         self.frame_tx = None;
     }
 }
@@ -176,6 +179,18 @@ impl Mux {
                                 warn!(id, "udp data: session receiver dropped");
                             }
                         }
+                        TYPE_ICMP_DATA => {
+                            let tx = {
+                                let inner = self.inner.read().await;
+                                inner.icmp_txs.get(&id).cloned()
+                            };
+                            if let Some(tx) = tx
+                                && let Ok((ip, data)) = decode_icmp_payload(&payload)
+                                && tx.send((ip, data)).await.is_err()
+                            {
+                                warn!(id, "icmp data: session receiver dropped");
+                            }
+                        }
                         _ => warn!(typ = format!("{typ:#x}"), id, "unknown frame type"),
                     }
                 }
@@ -247,6 +262,22 @@ impl Mux {
         let payload = encode_udp_payload(host, port, data);
         self.send_frame(encode_frame(stream_id, TYPE_UDP_DATA, &payload))
             .await
+    }
+
+    pub(crate) async fn icmp_register(&self) -> (u32, mpsc::Receiver<(String, bytes::Bytes)>) {
+        let id = self.alloc_id();
+        let (tx, rx) = mpsc::channel(256);
+        self.inner.write().await.icmp_txs.insert(id, tx);
+        (id, rx)
+    }
+
+    pub(crate) async fn icmp_data(&self, id: u32, data: bytes::Bytes) -> Result<()> {
+        self.send_frame(encode_frame(id, TYPE_ICMP_DATA, &data))
+            .await
+    }
+
+    pub(crate) async fn icmp_unregister(&self, id: u32) {
+        self.inner.write().await.icmp_txs.remove(&id);
     }
 }
 
