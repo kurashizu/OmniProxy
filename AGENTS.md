@@ -2,44 +2,57 @@
 
 ## Project Structure
 - Workspace root `Cargo.toml` manages all crates; use `-p <crate>` to build individually.
-- Main packages: `client/` (SOCKS5 over WebSocket), `server/` (relay), `proxy/` (TUN/routing manager).
-- `protocol/` is a shared library crate for wire-format codec used by both client and server.
-- `client` is a single binary crate; `src/main.rs` is the entrypoint and `src/bootstrap.rs` handles runtime init.
+- Four packages: `client/` (SOCKS5 over WebSocket), `server/` (relay), `proxy/` (TUN/routing manager), `protocol/` (shared wire-format codec).
+- `client` is a single binary; `src/main.rs` + `src/bootstrap.rs`.
+- `proxy` is a single binary; `src/main.rs` + `src/stack.rs` + `src/forwarder/`.
+- `server` is a single binary; `src/main.rs` + `src/session.rs` (WebSocket multiplexer).
 
 ## Build & Test Commands
-- **Build client**: `cargo build -p client --release`
-- **Build proxy**: `cargo build -p proxy --release`
-- **Build server**: `cargo build -p server --release`
-- **Build all**: `cargo build --release`
-- **Check (lint)**: `cargo check`
-- **Check single crate**: `cargo check -p server`
-- **Format check**: `cargo fmt --check`
-- **Format fix**: `cargo fmt`
-- **Clippy (if configured)**: `cargo clippy -- -D warnings`
-
-## Code Style
-- Use standard rustfmt defaults (no custom rustfmt.toml)
-- Prefer `anyhow::Result` for error handling
-- Use `tracing` for logging (info!, warn!, debug!, error!)
-- Use `tokio` for async runtime
-- Prefer `use` at top of file; group by: std, external crates, local modules
-- Keep functions focused and small
-- Use descriptive variable names
-- Add doc comments for public APIs and CLI fields
+- **Build all (release)**: `cargo build --release`
+- **Build single crate**: `cargo build -p client --release`, `-p proxy`, `-p server`
+- **Check**: `cargo check`
+- **Format**: `cargo fmt` / `cargo fmt --check`
+- **Clippy**: `cargo clippy -- -D warnings`
+- **Windows cross-compile check**: `cargo check -p server -p client --target x86_64-pc-windows-gnu`
 
 ## Architecture Notes
-- Client WebSocket frame format is fixed: `[4B stream_id][1B type][payload]`; UDP uses `stream_id=0`.
-- Wire protocol codec lives in `protocol/src/lib.rs`, shared by client and server.
-- `client` can auto-prepend `wss://` when `server` omits a scheme, but it no longer auto-detects outbound IP changes.
-- Client reconnect is bounded to 5 retries; server does not reconnect to client.
-- `proxy` auto-passes `--outbound-ip` to `client` when a physical interface IP is available.
-- Keep `.opencode/` out of commits; it is gitignored.
-- Release tags start with `v`; GitHub Actions builds all three packages and publishes zip (Windows) or tar.xz (Linux/macOS) artifacts.
 
-## Testing
-- Verify changes with `cargo check`.
-- Run manual tests: `curl -x socks5h://127.0.0.1:1080 <url>` for TCP, `dig @8.8.8.8 example.com` for UDP.
+### Wire Protocol (`protocol/src/lib.rs`)
+- Frame: `[4B stream_id][1B type][payload]`
+- `decode_frame(data: Bytes)` — caller passes `Bytes` (zero-copy); **do not pass `&[u8]`**
+- `encode_frame_bytes(stream_id, typ, payload: Bytes)` — use for Bytes payloads to avoid double-copy
+- `decode_udp_payload(payload: &Bytes)`, `decode_icmp_payload(payload: &[u8])` — decode helpers
+
+### Client ↔ Server Communication
+- Client connects via secure WebSocket to server.
+- `client` registers streams with `server` via `TYPE_TCP_CONNECT / TYPE_UDP_DATA / TYPE_ICMP_DATA` frames.
+- Client SOCKS5 server listens on `127.0.0.1:1080`; proxy SOCKS5 server is also on `127.0.0.1:1080`.
+- Server `session.rs` is the WebSocket session multiplexer; it dispatches frames to TCP/UDP/ICMP handlers.
+- Server uses `DashMap<u32, ...>` for stream, UDP socket, and ICMP stream tables.
+- Server uses `tokio::sync::Semaphore` (4096 permits) to limit concurrent streams.
+
+### Proxy Architecture
+- `proxy` runs `netstack-smoltcp` as the TUN interface's network stack.
+- ICMP packets are intercepted **before** the netstack via the `icmp::IcmpHandler` in `proxy/src/forwarder/icmp.rs`.
+- ICMP passthrough uses a custom SOCKS5 CMD=0xA1 over a dedicated TCP connection.
+- UDP sessions are relay-based: proxy binds a local UDP socket and relays via SOCKS5 UDP ASSOCIATE.
+
+### Platform-Specific
+- `server/src/icmp/` — raw ICMP socket code, **Unix-only** (`#[cfg(unix)]`). Windows builds use a stub that logs a warning.
+- `proxy/src/network.rs` and `proxy/src/forwarder/tun_device.rs` — route/TUN setup, platform-specific (`target_os = "linux"`, `macos`, `windows`).
+- Client `proxy/src/ws.rs` — `DNS_CACHE` with 5-minute TTL; `getifaddrs` / `GetAdaptersAddresses` for interface binding.
+
+### Client Reconnect
+- On WebSocket disconnect, client uses **exponential backoff** (1s → 2s → ... → 30s cap) with **infinite retries**.
+- Previously had a 5-retry cap; the cap was removed in v1.0.3-beta.2.
+
+## Code Style
+- Standard rustfmt defaults (no custom `rustfmt.toml`).
+- `anyhow::Result` for error handling; `tracing` for logging.
+- Prefer `use` at top of file, group by: std → external → local.
+- Doc comments for public APIs.
 
 ## Release
-- Change version in `Cargo.toml` and commit.
-- Push a tag (starts with `v`), e.g. `v1.2.3-rc.1`, then github actions will build and publish the release.
+- Update version in `Cargo.toml` (`[workspace.package]`), commit, then tag `v*` and push.
+- GitHub Actions builds all three packages and publishes zip (Windows) or tar.xz (Linux/macOS).
+- Keep `.opencode/` out of commits; it is gitignored.
