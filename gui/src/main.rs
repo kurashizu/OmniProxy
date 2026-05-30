@@ -24,7 +24,7 @@ fn set_panic_hook() {
         }).unwrap_or_default();
         let full = format!("OmniProxy crashed:{msg}{location}");
 
-        extern "system" {
+        unsafe extern "system" {
             fn MessageBoxW(hWnd: *const core::ffi::c_void, lpText: *const u16, lpCaption: *const u16, uType: u32) -> i32;
         }
         let wide: Vec<u16> = full.encode_utf16().chain(std::iter::once(0)).collect();
