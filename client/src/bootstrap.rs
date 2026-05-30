@@ -10,7 +10,15 @@ pub fn init() {
         .expect("failed to install rustls crypto provider");
 
     #[cfg(feature = "console")]
-    console_subscriber::init();
+    {
+        use tracing_subscriber::prelude::*;
+        let (console_layer, server) = console_subscriber::ConsoleLayer::new();
+        tokio::spawn(server.serve());
+        tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer())
+            .with(console_layer)
+            .init();
+    }
 
     #[cfg(not(feature = "console"))]
     tracing_subscriber::fmt()

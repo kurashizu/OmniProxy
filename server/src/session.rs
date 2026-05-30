@@ -20,7 +20,7 @@ pub(crate) async fn handle_socket(socket: WebSocket) {
     let mut ws_tx = ws_tx;
     tokio::spawn(async move {
         while let Some(frame) = frame_rx.recv().await {
-            if ws_tx.send(Message::Binary(frame.into())).await.is_err() {
+            if ws_tx.send(Message::Binary(frame)).await.is_err() {
                 break;
             }
         }
@@ -46,7 +46,7 @@ pub(crate) async fn handle_socket(socket: WebSocket) {
                         let target = String::from_utf8_lossy(&payload).to_string();
                         debug!("[TCP→] {target} sid={stream_id}");
 
-                        let (up_tx, up_rx) = mpsc::channel::<Bytes>(64);
+                        let (up_tx, up_rx) = mpsc::channel::<Bytes>(1024);
                         stream_map.insert(stream_id, up_tx);
 
                         let ftx = frame_tx.clone();
@@ -58,8 +58,11 @@ pub(crate) async fn handle_socket(socket: WebSocket) {
                     }
 
                     TYPE_TCP_DATA => {
-                        if let Some(tx) = stream_map.get(&stream_id) {
-                            tx.send(payload).await.ok();
+                        let tx = stream_map.get(&stream_id).map(|r| r.clone());
+                        if let Some(tx) = tx
+                            && tx.send(payload).await.is_err()
+                        {
+                            warn!(stream_id, "tcp data: stream receiver dropped");
                         }
                     }
 

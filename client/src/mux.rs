@@ -151,20 +151,29 @@ impl Mux {
                             }
                         }
                         TYPE_TCP_DATA => {
-                            let inner = self.inner.read().await;
-                            if let Some(tx) = inner.streams.get(&id) {
-                                tx.send(payload).await.ok();
+                            let tx = {
+                                let inner = self.inner.read().await;
+                                inner.streams.get(&id).cloned()
+                            };
+                            if let Some(tx) = tx
+                                && tx.send(payload).await.is_err()
+                            {
+                                warn!(id, "tcp data: stream receiver dropped");
                             }
                         }
                         TYPE_TCP_FIN => {
                             self.inner.write().await.streams.remove(&id);
                         }
                         TYPE_UDP_DATA => {
-                            if let Ok((host, port, data)) = decode_udp_payload(&payload) {
+                            let tx = {
                                 let inner = self.inner.read().await;
-                                if let Some(tx) = inner.udp_txs.get(&id) {
-                                    tx.send((host, port, data)).await.ok();
-                                }
+                                inner.udp_txs.get(&id).cloned()
+                            };
+                            if let Some(tx) = tx
+                                && let Ok((host, port, data)) = decode_udp_payload(&payload)
+                                && tx.send((host, port, data)).await.is_err()
+                            {
+                                warn!(id, "udp data: session receiver dropped");
                             }
                         }
                         _ => warn!(typ = format!("{typ:#x}"), id, "unknown frame type"),
@@ -197,7 +206,7 @@ impl Mux {
     )> {
         let id = self.alloc_id();
         debug!(id, target, "tcp connect");
-        let (data_tx, data_rx) = mpsc::channel::<bytes::Bytes>(64);
+        let (data_tx, data_rx) = mpsc::channel::<bytes::Bytes>(1024);
         let (conn_tx, conn_rx) = oneshot::channel::<Result<()>>();
         {
             let mut inner = self.inner.write().await;

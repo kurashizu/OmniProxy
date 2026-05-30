@@ -6,16 +6,41 @@ use tokio::sync::mpsc;
 use tracing::warn;
 
 pub(crate) async fn bind_socket() -> Option<Arc<UdpSocket>> {
-    match UdpSocket::bind("[::]:0").await {
-        Ok(s) => Some(Arc::new(s)),
+    let sock = match UdpSocket::bind("[::]:0").await {
+        Ok(s) => s,
         Err(_) => match UdpSocket::bind("0.0.0.0:0").await {
-            Ok(s) => Some(Arc::new(s)),
+            Ok(s) => s,
             Err(e) => {
                 warn!("[udp] bind: {e}");
-                None
+                return None;
             }
         },
+    };
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::io::AsRawFd;
+        let fd = sock.as_raw_fd();
+        let size = (2 * 1024 * 1024) as libc::c_int;
+        unsafe {
+            libc::setsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                libc::SO_RCVBUF,
+                &size as *const _ as *const libc::c_void,
+                std::mem::size_of::<libc::c_int>() as libc::socklen_t,
+            );
+            libc::setsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                libc::SO_SNDBUF,
+                &size as *const _ as *const libc::c_void,
+                std::mem::size_of::<libc::c_int>() as libc::socklen_t,
+            );
+        }
     }
+
+    Some(Arc::new(sock))
 }
 
 pub(crate) fn spawn_recv_task(
