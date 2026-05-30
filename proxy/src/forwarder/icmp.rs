@@ -316,9 +316,12 @@ fn rebuild_ipv6(original_pkt: &[u8], icmp_payload: &[u8], src_ip: &IpAddr) -> Ve
     // ICMP payload
     reply[40..].copy_from_slice(icmp_payload);
 
+    // ICMPv6 checksum: zero the existing checksum field (bytes 2..4 of ICMP header)
+    // before computing, as it may contain a stale value from the original sender.
+    reply[42..44].copy_from_slice(&[0, 0]);
+
     // ICMPv6 checksum (pseudo-header + ICMP payload)
-    let checksum = icmpv6_checksum(&reply[..40], icmp_payload);
-    // ICMPv6 checksum is at bytes 2..4 of the ICMP header (offset 42..44 in full packet)
+    let checksum = icmpv6_checksum(&reply[..40], &reply[40..]);
     reply[42..44].copy_from_slice(&checksum.to_be_bytes());
 
     reply
