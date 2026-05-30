@@ -3,8 +3,8 @@ use bytes::Bytes;
 use dashmap::DashMap;
 use futures_util::{SinkExt, StreamExt};
 use protocol::{
-    decode_frame, decode_icmp_payload, decode_udp_payload, encode_frame, TYPE_ICMP_DATA,
-    TYPE_TCP_CONNECT, TYPE_TCP_CONNECTED, TYPE_TCP_DATA, TYPE_TCP_FIN, TYPE_UDP_DATA,
+    decode_frame, decode_udp_payload, encode_frame, TYPE_ICMP_DATA, TYPE_TCP_CONNECT,
+    TYPE_TCP_CONNECTED, TYPE_TCP_DATA, TYPE_TCP_FIN, TYPE_UDP_DATA,
 };
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -104,16 +104,8 @@ pub(crate) async fn handle_socket(socket: WebSocket) {
 
                     TYPE_ICMP_DATA => {
                         if let Some(tx) = icmp_streams.get(&stream_id) {
-                            // Existing stream: decode ICMP payload and forward
-                            let (target, icmp_data) = match decode_icmp_payload(&payload) {
-                                Ok(v) => v,
-                                Err(e) => {
-                                    warn!("[icmp] decode: {e}");
-                                    continue;
-                                }
-                            };
-                            let _ = target; // target already known from connect
-                            if tx.send(icmp_data).await.is_err() {
+                            // Existing stream: forward raw payload directly
+                            if tx.send(payload).await.is_err() {
                                 warn!(stream_id, "icmp: handler receiver dropped");
                             }
                         } else {
