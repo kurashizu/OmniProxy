@@ -48,10 +48,20 @@ impl ProxyHandle {
 
         #[cfg(not(target_os = "macos"))]
         {
-            let mut cmd = Command::new("sudo");
-            cmd.args([proxy_bin, "-c", config_path])
+            let mut cmd = Command::new(if cfg!(windows) { proxy_bin } else { "sudo" });
+            if !cfg!(windows) {
+                cmd.arg(proxy_bin);
+            }
+            cmd.args(["-c", config_path])
                 .stderr(Stdio::piped());
+            #[cfg(unix)]
             cmd.process_group(0);
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                const CREATE_NO_WINDOW: u32 = 0x08000000;
+                cmd.creation_flags(CREATE_NO_WINDOW);
+            }
             let mut child = cmd.spawn().ok()?;
             let stderr = child.stderr.take().map(set_non_blocking);
             Some(Self { child, stderr })
