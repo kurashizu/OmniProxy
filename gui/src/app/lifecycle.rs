@@ -122,6 +122,7 @@ fn do_poll_blocking(config: &crate::config::GuiConfig, prev_tx: u64, prev_rx: u6
 impl DashboardApp {
     pub(crate) fn new(cc: &eframe::CreationContext<'_>) -> Self {
         cc.egui_ctx.set_pixels_per_point(1.0);
+        cc.egui_ctx.set_theme(eframe::egui::Theme::Dark);
 
         let exe_dir = crate::paths::base_dir();
 
