@@ -140,9 +140,28 @@ impl Mux {
 
     pub(crate) async fn connect_mux(cfg: &Config) -> Result<Arc<Self>> {
         let mux = Arc::new(Mux::new(cfg.clone()));
-        let disc_rx = mux.connect().await?;
-        spawn_reconnect_loop(mux.clone(), disc_rx);
-        Ok(mux)
+
+        const MAX_RETRIES: u32 = 2;
+        const RETRY_DELAY: Duration = Duration::from_secs(5);
+        let mut last_err = None;
+
+        for attempt in 1..=MAX_RETRIES {
+            match mux.connect().await {
+                Ok(disc_rx) => {
+                    spawn_reconnect_loop(mux.clone(), disc_rx);
+                    return Ok(mux);
+                }
+                Err(e) => {
+                    warn!(attempt, max = MAX_RETRIES, "connection failed: {e:#}");
+                    last_err = Some(e);
+                    if attempt < MAX_RETRIES {
+                        tokio::time::sleep(RETRY_DELAY).await;
+                    }
+                }
+            }
+        }
+
+        Err(last_err.unwrap_or_else(|| anyhow::anyhow!("connection failed")))
     }
 
     fn alloc_id(&self) -> u32 {

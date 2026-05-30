@@ -97,10 +97,22 @@ impl ProxyHandle {
         {
             let pid = self.child.id();
             if pid != 0 {
+                // Kill sudo's child process tree (proxy → client)
+                let _ = Command::new("pkill")
+                    .args(["-TERM", "-P", &pid.to_string()])
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status();
+                // Also try process group
                 let pgid = -(pid as i32);
                 unsafe { libc::kill(pgid, libc::SIGTERM); }
                 std::thread::sleep(std::time::Duration::from_millis(500));
                 if self.is_alive() {
+                    let _ = Command::new("pkill")
+                        .args(["-KILL", "-P", &pid.to_string()])
+                        .stdout(Stdio::null())
+                        .stderr(Stdio::null())
+                        .status();
                     unsafe { libc::kill(pgid, libc::SIGKILL); }
                 }
             }
