@@ -65,17 +65,22 @@ pub(crate) async fn run(
 
     // recv raw ICMP → encode source IP → send to mux
     // With SOCK_RAW, recv returns the full IP packet. We need to strip the IP header.
+    // Only forward echo replies (type 0) from the target host.
+    let target_ip = target_addr.ip();
     let recv_sock = sock.clone();
     let recv_tx = frame_tx.clone();
     let recv_task = tokio::spawn(async move {
         let mut buf = vec![0u8; 65535];
         loop {
             match recv_sock.recv_from(&mut buf).await {
-                Ok((n, _src)) => {
+                Ok((n, src)) => {
                     if n < 20 {
                         continue;
                     }
-                    // Parse IP header to find ICMP payload
+                    // Only accept replies from the target IP
+                    if src.ip() != target_ip {
+                        continue;
+                    }
                     let ihl = ((buf[0] & 0x0F) as usize) * 4;
                     if n < ihl + 8 {
                         continue;
@@ -86,11 +91,11 @@ pub(crate) async fn run(
                         debug!(
                             "[icmp] skipping non-echo type={} from {}",
                             icmp_type,
-                            _src.ip()
+                            src.ip()
                         );
                         continue;
                     }
-                    let src_ip = _src.ip().to_string();
+                    let src_ip = src.ip().to_string();
                     let icmp_data = &buf[ihl..n];
                     let payload = encode_icmp_payload(&src_ip, icmp_data);
                     let frame = encode_frame(stream_id, TYPE_ICMP_DATA, &payload);

@@ -27,8 +27,8 @@ struct IcmpSession {
 pub(crate) struct IcmpHandler {
     sessions: HashMap<SessionKey, IcmpSession>,
     socks_port: u16,
-    inbound_rx: mpsc::Receiver<(IpAddr, Vec<u8>)>,
-    inbound_tx: mpsc::Sender<(IpAddr, Vec<u8>)>,
+    inbound_rx: mpsc::Receiver<(IpAddr, IpAddr, Vec<u8>)>,
+    inbound_tx: mpsc::Sender<(IpAddr, IpAddr, Vec<u8>)>,
     outbound_rx: mpsc::Receiver<Vec<u8>>,
     tun_write_tx: mpsc::Sender<BytesMut>,
 }
@@ -73,10 +73,9 @@ impl IcmpHandler {
                         debug!("[icmp] outbound: {e}");
                     }
                 }
-                Some((dst, icmp_payload)) = self.inbound_rx.recv() => {
-                    // Look up the session by dst IP to get the correct original request packet
+                Some((dst, src_ip, icmp_payload)) = self.inbound_rx.recv() => {
                     if let Some(session) = self.sessions.get(&SessionKey { dst }) {
-                        let pkt = rebuild_ip_reply(&session.original_pkt, &icmp_payload);
+                        let pkt = rebuild_ip_reply(&session.original_pkt, &icmp_payload, &src_ip);
                         if !pkt.is_empty()
                             && let Err(e) = self.tun_write_tx.send(BytesMut::from(&pkt[..])).await
                         {
@@ -173,10 +172,14 @@ impl IcmpHandler {
                     break;
                 }
                 // Client sends encode_icmp_payload format: [2B ip_len][ip][icmp_data]
-                if let Ok((_ip, icmp_data)) = decode_icmp_payload(&payload_buf[..len])
-                    && inbound_tx.send((session_dst, icmp_data.to_vec())).await.is_err()
-                {
-                    break;
+                if let Ok((src_ip, icmp_data)) = decode_icmp_payload(&payload_buf[..len]) {
+                    let src: IpAddr = match src_ip.parse() {
+                        Ok(ip) => ip,
+                        Err(_) => continue,
+                    };
+                    if inbound_tx.send((session_dst, src, icmp_data.to_vec())).await.is_err() {
+                        break;
+                    }
                 }
             }
         });
@@ -247,11 +250,11 @@ fn parse_ip_icmp(pkt: &[u8]) -> Result<(IpAddr, Vec<u8>, u8)> {
 
 // ── IP reply reconstruction ──────────────────────────────────────────────────
 
-fn rebuild_ip_reply(original_pkt: &[u8], icmp_payload: &[u8]) -> Vec<u8> {
+fn rebuild_ip_reply(original_pkt: &[u8], icmp_payload: &[u8], src_ip: &IpAddr) -> Vec<u8> {
     let version = (original_pkt[0] >> 4) & 0x0F;
     match version {
-        4 => rebuild_ipv4(original_pkt, icmp_payload),
-        6 => rebuild_ipv6(original_pkt, icmp_payload),
+        4 => rebuild_ipv4(original_pkt, icmp_payload, src_ip),
+        6 => rebuild_ipv6(original_pkt, icmp_payload, src_ip),
         _ => {
             warn!("[icmp] unsupported IP version {version} in reply");
             Vec::new()
@@ -259,15 +262,18 @@ fn rebuild_ip_reply(original_pkt: &[u8], icmp_payload: &[u8]) -> Vec<u8> {
     }
 }
 
-fn rebuild_ipv4(original_pkt: &[u8], icmp_payload: &[u8]) -> Vec<u8> {
+fn rebuild_ipv4(original_pkt: &[u8], icmp_payload: &[u8], src_ip: &IpAddr) -> Vec<u8> {
+    let IpAddr::V4(v4_src) = src_ip else {
+        return Vec::new();
+    };
     let ihl = ((original_pkt[0] & 0x0F) as usize) * 4;
     let mut reply = vec![0u8; ihl + icmp_payload.len()];
 
     // Copy IP header
     reply[..ihl].copy_from_slice(&original_pkt[..ihl]);
 
-    // Swap src ↔ dst
-    reply[12..16].copy_from_slice(&original_pkt[16..20]);
+    // src = remote server's IP (the actual echo reply source), dst = original sender
+    reply[12..16].copy_from_slice(&v4_src.octets());
     reply[16..20].copy_from_slice(&original_pkt[12..16]);
 
     // Update total length
@@ -287,14 +293,17 @@ fn rebuild_ipv4(original_pkt: &[u8], icmp_payload: &[u8]) -> Vec<u8> {
     reply
 }
 
-fn rebuild_ipv6(original_pkt: &[u8], icmp_payload: &[u8]) -> Vec<u8> {
+fn rebuild_ipv6(original_pkt: &[u8], icmp_payload: &[u8], src_ip: &IpAddr) -> Vec<u8> {
+    let IpAddr::V6(v6_src) = src_ip else {
+        return Vec::new();
+    };
     let mut reply = vec![0u8; 40 + icmp_payload.len()];
 
     // Copy IPv6 header
     reply[..40].copy_from_slice(&original_pkt[..40]);
 
-    // Swap src ↔ dst
-    reply[8..24].copy_from_slice(&original_pkt[24..40]);
+    // src = remote server's IP, dst = original sender
+    reply[8..24].copy_from_slice(&v6_src.octets());
     reply[24..40].copy_from_slice(&original_pkt[8..24]);
 
     // Update payload length (bytes 4..6)
