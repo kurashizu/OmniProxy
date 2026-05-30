@@ -57,6 +57,7 @@ jobs:
 
             - name: Verify binary
               run: ls -lh target/${{ matrix.target }}/release/gui${{ matrix.ext }}
+              shell: bash
 
             - name: Upload artifact
               uses: actions/upload-artifact@v4
