@@ -9,24 +9,15 @@ pub fn init() {
         .install_default()
         .expect("failed to install rustls crypto provider");
 
-    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| "client=info".into());
-
     #[cfg(feature = "console")]
-    {
-        use tracing_subscriber::prelude::*;
-        let (console_layer, server) = console_subscriber::ConsoleLayer::new();
-        tokio::spawn(server.serve());
-        tracing_subscriber::registry()
-            .with(env_filter)
-            .with(console_layer)
-            .with(tracing_subscriber::fmt::layer())
-            .init();
-    }
+    console_subscriber::init();
 
     #[cfg(not(feature = "console"))]
     tracing_subscriber::fmt()
-        .with_env_filter(env_filter)
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "client=info".into()),
+        )
         .init();
 }
 
