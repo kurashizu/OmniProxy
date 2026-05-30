@@ -1,5 +1,5 @@
 [workspace]
-members = ["protocol", "client", "server", "proxy"]
+members = ["protocol", "client", "server", "proxy", "gui"]
 resolver = "2"
 
 [workspace.package]
