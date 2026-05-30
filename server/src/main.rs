@@ -8,7 +8,6 @@ use anyhow::Result;
 use axum::routing::get;
 use axum::Router;
 use tracing::info;
-#[cfg(not(feature = "console"))]
 use tracing_subscriber::EnvFilter;
 
 use config::{AppState, Config};
@@ -20,8 +19,10 @@ async fn main() -> Result<()> {
         use tracing_subscriber::prelude::*;
         let (console_layer, server) = console_subscriber::ConsoleLayer::new();
         tokio::spawn(server.serve());
+        let env_filter =
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| "server=info".into());
         tracing_subscriber::registry()
-            .with(tracing_subscriber::fmt::layer())
+            .with(tracing_subscriber::fmt::layer().with_filter(env_filter))
             .with(console_layer)
             .init();
     }

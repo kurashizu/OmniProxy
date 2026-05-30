@@ -14,8 +14,10 @@ pub fn init() {
         use tracing_subscriber::prelude::*;
         let (console_layer, server) = console_subscriber::ConsoleLayer::new();
         tokio::spawn(server.serve());
+        let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| "client=info".into());
         tracing_subscriber::registry()
-            .with(tracing_subscriber::fmt::layer())
+            .with(tracing_subscriber::fmt::layer().with_filter(env_filter))
             .with(console_layer)
             .init();
     }
