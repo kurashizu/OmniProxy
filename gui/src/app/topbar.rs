@@ -30,7 +30,7 @@ impl DashboardApp {
             .frame(egui::Frame::none().inner_margin(egui::Margin { left: 12.0, right: 12.0, top: 8.0, bottom: 4.0 }))
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    let tun_active = crate::native::is_tun_route_active(&self.config.tun_name);
+                    let tun_active = self.routes.iter().any(|r| r.interface == self.config.tun_name);
                     let heading_color = if tun_active {
                         egui::Color32::GREEN
                     } else {
