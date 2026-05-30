@@ -20,6 +20,7 @@ pub fn init() {
         tracing_subscriber::registry()
             .with(env_filter)
             .with(console_layer)
+            .with(tracing_subscriber::fmt::layer())
             .init();
     }
 
