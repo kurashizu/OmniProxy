@@ -36,7 +36,11 @@ impl DashboardApp {
             config_path: String::new(),
             config,
             show_token: false,
+            exe_dir: std::env::current_exe().ok()
+                .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+                .unwrap_or_else(|| std::path::PathBuf::from(".")),
             last_poll: web_time::Instant::now(),
+            proxy_handle: None,
         }
     }
 }

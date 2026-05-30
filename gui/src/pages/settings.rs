@@ -80,12 +80,12 @@ fn kv_edit_opt(ui: &mut egui::Ui, label: &str, value: &mut Option<String>) -> bo
 impl DashboardApp {
     fn save_config(&self) {
         let path = if self.config_path.is_empty() {
-            "config.yml"
+            self.exe_dir.join("config.yml")
         } else {
-            &self.config_path
+            std::path::PathBuf::from(&self.config_path)
         };
         if let Ok(yaml) = serde_yaml::to_string(&self.config) {
-            let _ = std::fs::write(path, &yaml);
+            let _ = std::fs::write(&path, &yaml);
         }
     }
 

@@ -1,3 +1,4 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 use eframe::egui;
 
 #[cfg(target_arch = "wasm32")]
@@ -5,6 +6,7 @@ use eframe::wasm_bindgen::JsCast;
 
 mod app;
 mod config;
+mod native;
 mod pages;
 mod widgets;
 

@@ -46,10 +46,71 @@ impl DashboardApp {
                     }
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.add(egui::Button::new(egui::RichText::new("⏹  Stop").size(13.0)).min_size(egui::vec2(80.0, 28.0))).clicked() {
+                        let running = self.proxy_handle.as_mut().map_or(false, |h| h.is_alive());
+                        if running {
+                            if ui.add(egui::Button::new(
+                                egui::RichText::new("⏹  Stop").size(13.0).color(egui::Color32::WHITE),
+                            ).min_size(egui::vec2(80.0, 28.0))
+                            .fill(egui::Color32::from_rgb(180, 60, 60))
+                            ).clicked() {
+                                if let Some(mut h) = self.proxy_handle.take() {
+                                    h.stop();
+                                }
+                            }
+                        } else {
+                            self.proxy_handle = None;
+                            if ui.add(egui::Button::new(
+                                egui::RichText::new("▶  Start").size(13.0).color(egui::Color32::WHITE),
+                            ).min_size(egui::vec2(80.0, 28.0))
+                            .fill(egui::Color32::from_rgb(60, 140, 60))
+                            ).clicked() {
+                                self.start_proxy();
+                            }
                         }
                     });
                 });
             });
     }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn start_proxy(&mut self) {
+        let proxy_bin = self.exe_dir.join(
+            if cfg!(windows) { "proxy.exe" } else { "proxy" }
+        );
+        let config_path = if self.config_path.is_empty() {
+            self.exe_dir.join("config.yml")
+        } else {
+            std::path::PathBuf::from(&self.config_path)
+        };
+
+        if !proxy_bin.exists() {
+            log::error!("proxy binary not found: {}", proxy_bin.display());
+            return;
+        }
+
+        let handle = if cfg!(target_os = "windows") {
+            crate::native::ProxyHandle::start(
+                &proxy_bin.to_string_lossy(),
+                &config_path.to_string_lossy(),
+            )
+        } else {
+            crate::native::ProxyHandle::start_sudo(
+                &proxy_bin.to_string_lossy(),
+                &config_path.to_string_lossy(),
+            )
+        };
+
+        match handle {
+            Some(h) => {
+                log::info!("proxy started (pid: {})", h.pid());
+                self.proxy_handle = Some(h);
+            }
+            None => {
+                log::error!("failed to start proxy (need sudo/admin?)");
+            }
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn start_proxy(&mut self) {}
 }

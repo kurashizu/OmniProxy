@@ -8,7 +8,7 @@ set -euo pipefail
 TARGET_DIR="${1:-target/release}"
 ICON_PATH="${2:-gui/icon.png}"
 APP_NAME="OmniProxy Dashboard"
-BINARY="$TARGET_DIR/gui"
+BINARY="$TARGET_DIR/OmniProxy"
 APP_DIR="$TARGET_DIR/${APP_NAME}.app"
 CONTENTS="$APP_DIR/Contents"
 MACOS="$CONTENTS/MacOS"
@@ -20,7 +20,18 @@ if [ ! -f "$BINARY" ]; then
 fi
 
 mkdir -p "$MACOS" "$RESOURCES"
-cp "$BINARY" "$MACOS/gui"
+
+# Copy GUI binary
+cp "$BINARY" "$MACOS/OmniProxy"
+chmod +x "$MACOS/OmniProxy"
+
+# Copy client/proxy into bundle so relative paths work from inside .app
+for bin in client proxy; do
+    if [ -f "$TARGET_DIR/$bin" ]; then
+        cp "$TARGET_DIR/$bin" "$MACOS/$bin"
+        chmod +x "$MACOS/$bin"
+    fi
+done
 
 # ── Convert PNG → ICNS ────────────────────────────────────────────
 if [ -f "$ICON_PATH" ]; then
@@ -52,7 +63,7 @@ cat > "$CONTENTS/Info.plist" <<EOF
 <plist version="1.0">
 <dict>
     <key>CFBundleExecutable</key>
-    <string>gui</string>
+    <string>OmniProxy</string>
     <key>CFBundleIdentifier</key>
     <string>com.omniproxy.gui</string>
     <key>CFBundleName</key>

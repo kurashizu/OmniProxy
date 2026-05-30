@@ -175,7 +175,7 @@ jobs:
 
             - name: Ad-hoc sign (macOS)
               if: matrix.os == 'macos-latest'
-              run: codesign --force --sign - target/${{ matrix.target }}/release/gui
+              run: codesign --force --sign - target/${{ matrix.target }}/release/OmniProxy
               shell: bash
 
             - name: Bundle .app (macOS)
@@ -192,7 +192,7 @@ jobs:
               with:
                   name: gui-${{ matrix.name }}
                   path: |
-                      target/${{ matrix.target }}/release/gui${{ matrix.ext }}
+                      target/${{ matrix.target }}/release/OmniProxy${{ matrix.ext }}
                       target/${{ matrix.target }}/release/*.app/
                       target/${{ matrix.target }}/release/*.AppImage
                   if-no-files-found: error
@@ -279,7 +279,7 @@ jobs:
                   elif compgen -G "gui-art/*.AppImage" > /dev/null 2>&1; then
                       cp gui-art/*.AppImage dist/
                   else
-                      cp gui-art/gui${{ matrix.ext }} dist/
+                      cp gui-art/OmniProxy${{ matrix.ext }} dist/
                   fi
 
                   # Config

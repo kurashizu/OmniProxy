@@ -17,6 +17,14 @@ impl ProxyHandle {
             .map(|child| Self { child })
     }
 
+    pub(crate) fn start_sudo(proxy_bin: &str, config_path: &str) -> Option<Self> {
+        Command::new("sudo")
+            .args([proxy_bin, "-c", config_path])
+            .spawn()
+            .ok()
+            .map(|child| Self { child })
+    }
+
     pub(crate) fn is_alive(&mut self) -> bool {
         matches!(self.child.try_wait(), Ok(None))
     }
@@ -24,6 +32,10 @@ impl ProxyHandle {
     pub(crate) fn stop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
+    }
+
+    pub(crate) fn pid(&self) -> u32 {
+        self.child.id()
     }
 }
 

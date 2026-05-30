@@ -39,6 +39,8 @@ pub(crate) struct DashboardApp {
     pub(crate) config_path: String,
     pub(crate) config: GuiConfig,
     pub(crate) show_token: bool,
+    pub(crate) exe_dir: std::path::PathBuf,
+    pub(crate) proxy_handle: Option<crate::native::ProxyHandle>,
 
     pub(crate) last_poll: web_time::Instant,
 }

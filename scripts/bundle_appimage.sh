@@ -7,7 +7,7 @@ set -euo pipefail
 
 TARGET_DIR="${1:-target/release}"
 ICON_PATH="${2:-gui/icon.png}"
-BINARY="$TARGET_DIR/gui"
+BINARY="$TARGET_DIR/OmniProxy"
 APP_DIR="$TARGET_DIR/OmniProxy.AppDir"
 
 if [ ! -f "$BINARY" ]; then
@@ -17,38 +17,36 @@ fi
 
 rm -rf "$APP_DIR"
 mkdir -p "$APP_DIR/usr/bin"
-cp "$BINARY" "$APP_DIR/usr/bin/omniproxy-gui"
-ln -sf usr/bin/omniproxy-gui "$APP_DIR/AppRun"
+cp "$BINARY" "$APP_DIR/usr/bin/OmniProxy"
+chmod +x "$APP_DIR/usr/bin/OmniProxy"
+ln -sf usr/bin/OmniProxy "$APP_DIR/AppRun"
 
 # ── .desktop file ───────────────────────────────────────────────────
-cat > "$APP_DIR/omniproxy-gui.desktop" <<EOF
+cat > "$APP_DIR/OmniProxy.desktop" <<EOF
 [Desktop Entry]
 Type=Application
 Name=OmniProxy Dashboard
 Comment=OmniProxy Proxy & Relay Dashboard
-Exec=omniproxy-gui
-Icon=omniproxy-gui
+Exec=OmniProxy
+Icon=OmniProxy
 Categories=Network;Utility;
 Terminal=false
 EOF
 
 # ── Icon ────────────────────────────────────────────────────────────
 if [ -f "$ICON_PATH" ]; then
-    # AppImage expects 256x256 PNG
-    if command -v sips &>/dev/null; then
-        sips -z 256 256 "$ICON_PATH" --out "$APP_DIR/omniproxy-gui.png" >/dev/null
-    elif command -v convert &>/dev/null; then
-        convert "$ICON_PATH" -resize 256x256 "$APP_DIR/omniproxy-gui.png"
+    if command -v convert &>/dev/null; then
+        convert "$ICON_PATH" -resize 256x256 "$APP_DIR/OmniProxy.png"
     else
-        cp "$ICON_PATH" "$APP_DIR/omniproxy-gui.png"
+        cp "$ICON_PATH" "$APP_DIR/OmniProxy.png"
     fi
 else
     echo "Warning: icon not found at $ICON_PATH, using placeholder"
     printf '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\x0bIDATx\x9cc\xf8\x0f\x00\x00\x01\x01\x00\x05\x18\xd8N\x00\x00\x00\x00IEND\xae\x42\x60\x82' \
-        > "$APP_DIR/omniproxy-gui.png"
+        > "$APP_DIR/OmniProxy.png"
 fi
 
-# ── Download & extract appimagetool (no FUSE needed) ───────────────
+# ── Download & extract appimagetool ────────────────────────────────
 TOOL_DIR="$TARGET_DIR/appimagetool-extracted"
 if [ ! -f "$TOOL_DIR/AppRun" ]; then
     echo "Downloading appimagetool..."
@@ -64,6 +62,11 @@ fi
 ARCH=$(uname -m)
 OUTPUT="$TARGET_DIR/OmniProxy-Dashboard-${ARCH}.AppImage"
 ARCH=$ARCH "$TOOL_DIR/AppRun" "$APP_DIR" "$OUTPUT"
+
+# Clean up intermediate artifacts so they don't get packaged
+rm -rf "$APP_DIR"
+rm -f "$TARGET_DIR/appimagetool.AppImage"
+rm -rf "$TOOL_DIR"
 
 echo "Created $OUTPUT"
 ls -lh "$OUTPUT"
