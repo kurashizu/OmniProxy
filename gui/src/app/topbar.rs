@@ -30,7 +30,8 @@ impl DashboardApp {
             .frame(egui::Frame::none().inner_margin(egui::Margin { left: 12.0, right: 12.0, top: 8.0, bottom: 4.0 }))
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    let heading_color = if self.ws_connected && !self.tun_name.is_empty() {
+                    let tun_active = crate::native::is_tun_route_active(&self.config.tun_name);
+                    let heading_color = if tun_active {
                         egui::Color32::GREEN
                     } else {
                         egui::Color32::from_rgb(180, 100, 100)
@@ -50,8 +51,7 @@ impl DashboardApp {
                     }
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let running = self.ws_connected && !self.tun_name.is_empty();
-                        if running {
+                        if tun_active {
                             if ui.add(egui::Button::new(
                                 egui::RichText::new("⏹  Stop").size(13.0).color(egui::Color32::WHITE),
                             ).min_size(egui::vec2(80.0, 28.0))

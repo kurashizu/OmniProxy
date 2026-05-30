@@ -137,6 +137,49 @@ impl ProxyHandle {
     }
 }
 
+pub(crate) fn is_tun_route_active(tun_name: &str) -> bool {
+    if tun_name.is_empty() {
+        return false;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        Command::new("ip")
+            .args(["route", "show", "dev", tun_name])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .output()
+            .map(|o| o.status.success() && !o.stdout.is_empty())
+            .unwrap_or(false)
+    }
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("sh")
+            .args(["-c", &format!("netstat -rn | grep -q '.*{tun_name}'")])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("route")
+            .args(["print"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .output()
+            .map(|o| {
+                let output = String::from_utf8_lossy(&o.stdout);
+                output.contains(tun_name)
+            })
+            .unwrap_or(false)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    {
+        false
+    }
+}
+
 #[cfg(unix)]
 fn set_non_blocking(stderr: ChildStderr) -> ChildStderr {
     use std::os::unix::io::AsRawFd;
