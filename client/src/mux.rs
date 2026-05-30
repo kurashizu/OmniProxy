@@ -264,11 +264,25 @@ impl Mux {
             .await
     }
 
-    pub(crate) async fn icmp_register(&self) -> (u32, mpsc::Receiver<(String, bytes::Bytes)>) {
+    pub(crate) async fn icmp_register(
+        &self,
+        target: &str,
+    ) -> Result<(
+        u32,
+        mpsc::Receiver<(String, bytes::Bytes)>,
+        oneshot::Receiver<Result<()>>,
+    )> {
         let id = self.alloc_id();
         let (tx, rx) = mpsc::channel(256);
-        self.inner.write().await.icmp_txs.insert(id, tx);
-        (id, rx)
+        let (conn_tx, conn_rx) = oneshot::channel();
+        {
+            let mut inner = self.inner.write().await;
+            inner.icmp_txs.insert(id, tx);
+            inner.connect_notify.insert(id, conn_tx);
+        }
+        self.send_frame(encode_frame(id, TYPE_ICMP_DATA, target.as_bytes()))
+            .await?;
+        Ok((id, rx, conn_rx))
     }
 
     pub(crate) async fn icmp_data(&self, id: u32, data: bytes::Bytes) -> Result<()> {

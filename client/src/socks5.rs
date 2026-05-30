@@ -326,7 +326,35 @@ async fn handle_icmp(
     let target = target_to_string(&target_addr);
     debug!(target, "socks5 icmp");
 
-    let (stream_id, mut icmp_rx) = mux.icmp_register().await;
+    let (stream_id, mut icmp_rx, conn_rx) = match mux.icmp_register(&target).await {
+        Ok(v) => v,
+        Err(e) => {
+            let dummy: SocketAddr = "0.0.0.0:0".parse().unwrap();
+            write_socks5_reply(&mut stream, REP_GENERAL_FAILURE, &dummy)
+                .await
+                .ok();
+            return Err(e);
+        }
+    };
+
+    match conn_rx.await {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => {
+            let dummy: SocketAddr = "0.0.0.0:0".parse().unwrap();
+            write_socks5_reply(&mut stream, REP_GENERAL_FAILURE, &dummy)
+                .await
+                .ok();
+            bail!("server icmp connect failed: {e}");
+        }
+        Err(_) => {
+            let dummy: SocketAddr = "0.0.0.0:0".parse().unwrap();
+            write_socks5_reply(&mut stream, REP_GENERAL_FAILURE, &dummy)
+                .await
+                .ok();
+            bail!("mux closed before icmp ack");
+        }
+    }
+
     let dummy: SocketAddr = "0.0.0.0:0".parse().unwrap();
     write_socks5_reply(&mut stream, REP_SUCCESS, &dummy).await?;
 

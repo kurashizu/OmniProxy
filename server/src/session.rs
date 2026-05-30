@@ -3,8 +3,8 @@ use bytes::Bytes;
 use dashmap::DashMap;
 use futures_util::{SinkExt, StreamExt};
 use protocol::{
-    decode_frame, decode_icmp_payload, decode_udp_payload, TYPE_ICMP_DATA, TYPE_TCP_CONNECT,
-    TYPE_TCP_DATA, TYPE_TCP_FIN, TYPE_UDP_DATA,
+    decode_frame, decode_icmp_payload, decode_udp_payload, encode_frame, TYPE_ICMP_DATA,
+    TYPE_TCP_CONNECT, TYPE_TCP_CONNECTED, TYPE_TCP_DATA, TYPE_TCP_FIN, TYPE_UDP_DATA,
 };
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -103,18 +103,24 @@ pub(crate) async fn handle_socket(socket: WebSocket) {
                     },
 
                     TYPE_ICMP_DATA => {
-                        // payload format: [u16 target_ip_len][target_ip][icmp_data]
-                        let (target, icmp_data) = match decode_icmp_payload(&payload) {
-                            Ok(v) => v,
-                            Err(e) => {
-                                warn!("[icmp] decode: {e}");
-                                continue;
+                        if let Some(tx) = icmp_streams.get(&stream_id) {
+                            // Existing stream: decode ICMP payload and forward
+                            let (target, icmp_data) = match decode_icmp_payload(&payload) {
+                                Ok(v) => v,
+                                Err(e) => {
+                                    warn!("[icmp] decode: {e}");
+                                    continue;
+                                }
+                            };
+                            let _ = target; // target already known from connect
+                            if tx.send(icmp_data).await.is_err() {
+                                warn!(stream_id, "icmp: handler receiver dropped");
                             }
-                        };
-
-                        let tx = if let Some(s) = icmp_streams.get(&stream_id) {
-                            s.clone()
                         } else {
+                            // First frame: payload is raw target string (the "connect" request)
+                            let target = String::from_utf8_lossy(&payload).to_string();
+                            debug!("[ICMP→] {target} sid={stream_id}");
+
                             let (tx, rx) = mpsc::channel::<Bytes>(256);
                             let ftx = frame_tx.clone();
                             let sm = icmp_streams.clone();
@@ -123,12 +129,12 @@ pub(crate) async fn handle_socket(socket: WebSocket) {
                                 sm.remove(&stream_id);
                             });
                             icmp_streams.insert(stream_id, tx.clone());
-                            tx
-                        };
 
-                        // Forward raw ICMP data (target already decoded above)
-                        if tx.send(icmp_data).await.is_err() {
-                            warn!(stream_id, "icmp: handler receiver dropped");
+                            // Send ack so client can proceed with SOCKS5 reply
+                            let ack = encode_frame(stream_id, TYPE_TCP_CONNECTED, &[]);
+                            if frame_tx.send(ack).await.is_err() {
+                                warn!(stream_id, "icmp: failed to send ack");
+                            }
                         }
                     }
 
