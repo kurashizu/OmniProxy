@@ -7,15 +7,15 @@ use std::sync::Arc;
 #[command(name = "server", version)]
 /// Command-line options for the server binary.
 pub(crate) struct Cli {
-    #[arg(long, short, default_value = "0.0.0.0")]
+    #[arg(long, short)]
     /// Bind address for the WebSocket server.
-    pub addr: String,
-    #[arg(long, short, default_value = "9880")]
+    pub addr: Option<String>,
+    #[arg(long, short)]
     /// Bind port for the WebSocket server.
-    pub port: u16,
-    #[arg(long, short, default_value = "")]
+    pub port: Option<u16>,
+    #[arg(long, short)]
     /// Authentication token shared with clients.
-    pub token: String,
+    pub token: Option<String>,
     #[arg(long, short)]
     /// Load settings from a YAML config file.
     pub config: Option<String>,
@@ -47,11 +47,20 @@ impl Config {
             return serde_yaml::from_str(&text)
                 .with_context(|| format!("Failed to parse config file: {path}"));
         }
-        Ok(Config {
-            addr: cli.addr,
-            port: cli.port,
-            token: cli.token,
-        })
+
+        let addr = cli.addr
+            .or_else(|| std::env::var("SERVER_ADDR").ok())
+            .unwrap_or_else(default_addr);
+
+        let port = cli.port
+            .or_else(|| std::env::var("SERVER_PORT").ok().and_then(|p| p.parse().ok()))
+            .unwrap_or_else(default_port);
+
+        let token = cli.token
+            .or_else(|| std::env::var("SERVER_TOKEN").ok())
+            .unwrap_or_default();
+
+        Ok(Config { addr, port, token })
     }
 
     pub(crate) fn load() -> Result<Self> {

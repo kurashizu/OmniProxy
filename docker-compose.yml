@@ -1,0 +1,15 @@
+services:
+  server:
+    image: omniproxy-server
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "${SERVER_PORT:-9880}:9880"
+    environment:
+      - SERVER_TOKEN=${SERVER_TOKEN:-}
+      - SERVER_ADDR=0.0.0.0
+      - SERVER_PORT=9880
+    cap_add:
+      - NET_RAW
+    restart: unless-stopped
