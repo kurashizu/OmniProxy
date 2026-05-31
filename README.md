@@ -113,6 +113,79 @@ phys_iface: ""
 Browser/App → SOCKS5 client (127.0.0.1:1080) → WebSocket → server → target
 ```
 
+```mermaid
+graph TB
+    APP["App / Browser"] -->|"SOCKS5"| SOCKS5
+
+    subgraph Client ["Client"]
+        SOCKS5["SOCKS5 Server\n127.0.0.1:1080"]
+        RT["RateTracker\nper-stream, every 16 frames\n≥100KB/s → lo\n≤10KB/s → mi"]
+        HI["frame_hi (64)\nCONNECT / FIN / ICMP"]
+        MI["frame_mi (256)\ninteractive data"]
+        LO["frame_lo (1024)\nbulk data"]
+        WRITER["Writer\nhi → mi(16/iter) → lo"]
+        DISPATCH["Dispatch\nstream_id lookup"]
+
+        SOCKS5 --> RT
+        RT -->|"classify"| MI
+        RT -->|"classify"| LO
+        SOCKS5 -->|"control"| HI
+        HI --> WRITER
+        MI --> WRITER
+        LO --> WRITER
+    end
+
+    WRITER -->|"WebSocket\nbinary frames"| WS["WebSocket"]
+
+    subgraph Server ["Server"]
+        WS_RX["Session Mux\nSemaphore (4096)\nbackpressure 5s timeout"]
+        TCP_H["TCP Handler"]
+        UDP_H["UDP Handler"]
+        ICMP_H["ICMP Handler"]
+
+        WS_RX --> TCP_H
+        WS_RX --> UDP_H
+        WS_RX --> ICMP_H
+    end
+
+    WS --> WS_RX
+    WS_RX -->|"inbound"| DISPATCH
+    DISPATCH --> SOCKS5
+
+    TCP_H --> TARGET["Target"]
+    UDP_H --> TARGET
+    ICMP_H --> TARGET
+
+    subgraph Proxy ["Proxy (TUN mode)"]
+        TUN["TUN Device\n198.18.0.1/16"]
+        NS["netstack-smoltcp"]
+
+        subgraph Infra ["Infrastructure Tasks\nexit → full restart"]
+            T2S["tun_to_stack"]
+            S2T["stack_to_tun"]
+            TW["tun_writer"]
+        end
+
+        subgraph Svc ["Service Tasks\nexit → log only"]
+            TCP_T["tcp_task"]
+            UDP_T["udp_task"]
+            ICMP_T["icmp_task"]
+        end
+
+        TUN --> T2S --> NS
+        NS --> S2T --> TUN
+        NS --> TCP_T
+        NS --> UDP_T
+        TUN -->|"ICMP intercept"| ICMP_T
+        TW --> TUN
+    end
+
+    APP -->|"TUN"| TUN
+    TCP_T -->|"SOCKS5 CONNECT"| SOCKS5
+    UDP_T -->|"SOCKS5 UDP"| SOCKS5
+    ICMP_T -->|"SOCKS5 CMD=0xA1"| SOCKS5
+```
+
 **client**: SOCKS5 proxy server that multiplexes all streams over a persistent WebSocket connection to the server. Supports TCP, UDP, and ICMP (ping). Handles reconnection with exponential backoff. Outbound frames are prioritized: control frames (CONNECT/FIN) always go first, interactive data (SSH, DNS) is prioritized over bulk transfers (downloads, speed tests). Per-stream send rate is tracked every 16 frames and streams are dynamically reclassified between interactive and bulk queues.
 
 **server**: WebSocket relay that demultiplexes streams and bridges to target TCP/UDP endpoints. Enforces a 4096-stream concurrency limit. Per-stream backpressure with 5s timeout prevents a slow stream from blocking the entire session.
