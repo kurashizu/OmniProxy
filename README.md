@@ -1,111 +1,129 @@
-# OmniProxy
+<p align="center">
+  <p align="center"><img src="icon.png" alt="OmniProxy" width="120"></p>
+  <h1 align="center">OmniProxy</h1>
+  <p align="center">A self-hosted transparent proxy suite. Written in pure Rust — each binary is ~2 MB, zero dependencies, minimal CPU and memory footprint.</p>
+</p>
 
-A self-hosted transparent proxy suite that tunnels all system traffic through encrypted WebSocket connections with stream multiplexing. Supports TCP/UDP/ICMP, with full-system TUN mode for seamless traffic routing.
+<p align="center">
+  <strong>English</strong> · <a href="README.zh-CN.md">中文</a>
+</p>
 
-## Features
+<p align="center">
+  <a href="https://github.com/kurashizu/OmniProxy/releases"><img src="https://img.shields.io/github/v/release/kurashizu/OmniProxy" alt="Release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/kurashizu/OmniProxy" alt="License"></a>
+</p>
 
-- **WebSocket transport** — Tunnel traffic through Cloudflare Workers or any WebSocket endpoint
-- **Stream multiplexing** — Multiple TCP/UDP/ICMP streams share a single WebSocket connection with per-stream rate tracking and three-level priority QoS (control > interactive > bulk)
-- **Connection handling** — Client retries with exponential backoff and unlimited retries; outbound IP can be bound explicitly when needed
-- **TUN transparent proxy** — Route all system traffic through the proxy via built-in TUN forwarder; infrastructure and service tasks are isolated so a single protocol failure doesn't tear down the whole tunnel
-- **ICMP passthrough** — Ping (IPv4 and IPv6) works through the proxy
-- **Cross-platform** — Linux, macOS, and Windows support
+---
+
+| Binary | Role |
+|--------|------|
+| **server** | WebSocket relay — deploy on a VPS, container platform, or any internet-connected machine |
+| **client** | SOCKS5 proxy — runs on your local machine, multiplexes TCP/UDP/ICMP over a single WebSocket |
+| **proxy** | TUN forwarder — creates a virtual interface and routes all system traffic through the client |
+
+```
+Apps → [proxy] (optional) → [client] —WebSocket→ [server] —TCP/UDP/ICMP→ target
+```
 
 ## Quick Start
 
-### 1. Deploy the server
+**1. Download** — Get the latest release from [GitHub Releases](https://github.com/kurashizu/OmniProxy/releases).
 
-Deploy a Cloudflare Worker using the `server/` source, or run it on any server with a public WebSocket endpoint.
-
-Example Worker binding: the server listens on `0.0.0.0:9880` and expects a `token` header from clients.
-
-### 2. Run the client
-
+**2. Deploy the server** — Start the WebSocket relay on any machine with internet access:
 ```bash
-cargo run --manifest-path client/Cargo.toml -- --config client/config.yml
+./server --addr 0.0.0.0 --port 9880 --token your-token
+# or via Docker
+SERVER_TOKEN=your-token docker compose up -d
 ```
 
-Or with a downloaded release:
+The server listens on port 9880. Expose it directly, or behind a CDN tunnel (e.g. Cloudflare Tunnel) if you don't have a public IP.
+
+**3. Run the client** — Start the SOCKS5 proxy on your local machine:
 ```bash
 ./client --config config.yml
 ```
+Then set your browser or system proxy to `127.0.0.1:1080` (SOCKS5).
 
-### 3. Configure your system
-
-Set your system or browser SOCKS5 proxy to `127.0.0.1:1080`.
-
-**Browser:** Firefox → Settings → Network Settings → Manual proxy → SOCKS5 `127.0.0.1:1080`
-
-**macOS:** System Settings → Network → Wi-Fi → Proxies → SOCKS Proxy → `127.0.0.1:1080`
-
-**Linux:** System network settings or environment variables:
+**Transparent proxy (optional)** — Route all system traffic through the TUN forwarder:
 ```bash
-export ALL_PROXY=socks5://127.0.0.1:1080
+sudo ./proxy --config ./config.yml
 ```
 
-## Download Pre-built Binaries
+> **macOS:** Run `chmod +x * && ./setup_macos.sh` once to bypass Gatekeeper.
+> **Windows:** Run `proxy.exe --config config.yml` as Administrator (requires [Wintun](https://www.wintun.net/)).
 
-Download the latest release from GitHub:
+## Deployment Options
 
-- **Linux**: `omni-proxy-linux-x86_64.tar.xz`
-- **Windows**: `omni-proxy-windows-x86_64-msvc.zip`
-- **macOS**: `omni-proxy-macos-x86_64.tar.xz` or `omni-proxy-macos-aarch64.tar.xz`
+The **server** can be deployed in three ways:
 
-Each archive contains: `client`, `server`, `proxy`, `config.yml`, and `README.md`. macOS archives include `setup_macos.sh`.
+| Method | Description |
+|--------|-------------|
+| **VPS** | Run the binary directly on any Linux VPS (~2 MB static binary, zero deps) |
+| **Container platform** | Push to Render, Railway, Fly.io, etc. using the pre-built image |
+| **Any machine + CDN tunnel** | Run behind NAT and expose via Cloudflare Tunnel or similar |
 
-**One-time setup:** Extract the archive to any directory. Edit `config.yml` once — the `client` binary is resolved relative to the `proxy` binary location, so `./client` works out of the box.
+### Container platform
 
-**macOS:** Run `./setup_macos.sh` once to bypass Gatekeeper security restrictions (removes quarantine attributes and ad-hoc signs binaries).
+```yaml
+services:
+  server:
+    image: ghcr.io/kurashizu/omniproxy/omniproxy-server:latest
+    ports:
+      - "${SERVER_PORT:-9880}:9880"
+    environment:
+      - SERVER_TOKEN=${SERVER_TOKEN:-}
+    cap_add:
+      - NET_RAW
+    restart: unless-stopped
+```
+
+Pre-built images: [`ghcr.io/kurashizu/omniproxy/omniproxy-server`](https://github.com/kurashizu/OmniProxy/pkgs/container/omniproxy%2Fomniproxy-server).
+
+Local build: `docker compose build` or `docker build -t omniproxy-server .`
+
+> **ICMP:** For ping passthrough, the server needs `CAP_NET_RAW` (`sudo setcap cap_net_raw+ep server`) or root. Docker's `cap_add: NET_RAW` handles this.
 
 ## Configuration
 
-### Client (`client/config.yml`)
+### client/config.yml
 
 ```yaml
 addr: 127.0.0.1
 port: 1080
-token: "your-secret-token"
-server: "your-worker.your-subdomain.workers.dev/your-path"
+token: "your-token"
+server: "proxy.example.com"
 ```
 
-`server` should be a WebSocket URL. The client prepends `wss://` if the scheme is omitted.
-If you want the client to bind a source IP, pass `--outbound-ip`; the `proxy` binary can inject it automatically on platforms that need it.
-
-### Server (`server/config.yml`)
+### server/config.yml
 
 ```yaml
 addr: 0.0.0.0
 port: 9880
-token: "your-secret-token"  # clients must send this token
+token: "your-token"
 ```
 
-### Proxy (`config.yml`)
-
-For TUN transparent proxy mode. Place `config.yml` in the same directory as the `proxy` binary — the `client` path is resolved relative to the binary location, so `./client` works out of the box.
+### proxy/config.yml
 
 ```yaml
-# Core executables (relative to proxy binary location)
 client: "./client"
-
-# Server connection
-server: "your-worker.your-subdomain.workers.dev"
-token: "your-secret-token"
-
-# Local SOCKS5 port (client listens on)
+server: "proxy.example.com"
+token: "your-token"
 socks_port: 1080
-
-# TUN interface settings
-tun_name: "tun0"          # Linux: tun0 | macOS: utun100 | Windows: tun0
-tun_ip: "198.18.0.1"      # TUN interface IP
-tun_prefix: 16            # CIDR prefix (198.18.0.0/16)
-
-# IPv6 TUN settings
-tun_ip6: "fd00::1"
-tun_prefix6: 64
-
-# Physical interface (optional — leave empty for auto-detect)
-phys_iface: ""
+tun_name: "tun0"           # Linux: tun0 | macOS: utun100 | Windows: tun0
+tun_ip: "198.18.0.1"
+tun_prefix: 16
 ```
+
+## TUN Mode
+
+Routes all system traffic through the proxy by creating a virtual network interface.
+
+1. Creates a TUN interface with IP `198.18.0.1/16` (IPv4) and `fd00::1/64` (IPv6)
+2. Routes all traffic through the TUN via split default routes (`0.0.0.0/1` + `128.0.0.0/1`)
+3. The forwarder reads packets from TUN, extracts the destination, and sends them to the local SOCKS5 client (DNS is resolved server-side)
+4. The client multiplexes everything over WebSocket to the server
+
+**Important:** The TUN IP ranges `198.18.0.0/16` and `fd00::/64` must not conflict with your local network.
 
 ## Architecture
 
@@ -186,64 +204,32 @@ graph TB
     ICMP_T -->|"SOCKS5 CMD=0xA1"| SOCKS5
 ```
 
-**client**: SOCKS5 proxy server that multiplexes all streams over a persistent WebSocket connection to the server. Supports TCP, UDP, and ICMP (ping). Handles reconnection with exponential backoff. Outbound frames are prioritized: control frames (CONNECT/FIN) always go first, interactive data (SSH, DNS) is prioritized over bulk transfers (downloads, speed tests). Per-stream send rate is tracked every 16 frames and streams are dynamically reclassified between interactive and bulk queues.
+**client** — SOCKS5 proxy that multiplexes TCP/UDP/ICMP over a persistent WebSocket. Three priority queues (control > interactive > bulk) with per-stream rate tracking and automatic reclassification.
 
-**server**: WebSocket relay that demultiplexes streams and bridges to target TCP/UDP endpoints. Enforces a 4096-stream concurrency limit. Per-stream backpressure with 5s timeout prevents a slow stream from blocking the entire session.
+**server** — WebSocket relay that demultiplexes streams to target TCP/UDP endpoints. 4096-stream concurrency limit with per-stream 5s backpressure.
 
-**proxy**: Transparent proxy manager. Sets up TUN interface, routing rules, and launches the client with a built-in TUN forwarder. Infrastructure tasks (TUN read/write, netstack) are separated from service tasks (TCP/UDP/ICMP handlers) — a single protocol failure only loses that protocol, not the entire tunnel.
+**proxy** — TUN forwarder that routes all system traffic through the client. Infrastructure tasks (TUN I/O, netstack) are separated from service tasks (TCP/UDP/ICMP) — a single protocol failure doesn't tear down the entire tunnel.
 
-## Protocol
-
-Custom framing on top of WebSocket binary messages:
+## Wire Protocol
 
 | Type | Name | Direction | Description |
 |------|------|----------|-------------|
 | 0x01 | TCP_CONNECT | C→S | New TCP stream |
-| 0x02 | TCP_CONNECTED | S→C | Connection success/failure |
-| 0x03 | TCP_DATA | both | Payload data |
+| 0x02 | TCP_CONNECTED | S→C | Connection result |
+| 0x03 | TCP_DATA | both | Payload |
 | 0x04 | TCP_FIN | C→S | Stream closed |
 | 0x05 | UDP_DATA | C→S | UDP packet |
-| 0x06 | ICMP_DATA | C→S | ICMP echo request/response |
+| 0x06 | ICMP_DATA | C→S | ICMP echo |
 
 UDP payload: `[2B host_len][host bytes][2B port][data]`
 
 ICMP payload: `[2B ip_len][ip string][icmp_data]`
 
-## TUN Mode
-
-Route all system traffic through the proxy. The proxy binary sets up TUN, configures routes, and launches the client with a built-in TUN forwarder. DNS is resolved server-side — the client sends the original hostname via SOCKS5 CONNECT, not a resolved IP.
-
-### Linux/macOS
-
-```bash
-sudo ./proxy --config ./config.yml
-```
-
-### Windows (Driver by [Wintun](https://www.wintun.net/))
-
-Run with administrator privileges:
-
-```powershell
-.\proxy.exe --config .\config.yml
-```
-
-### How it works
-
-1. Proxy creates a TUN interface with IP `198.18.0.1/16` (IPv4) and `fd00::1/64` (IPv6)
-2. Routes all system traffic through the TUN interface via split default routes (`0.0.0.0/1` + `128.0.0.0/1`)
-3. Built-in forwarder reads packets from TUN, extracts the original destination, and sends to the local SOCKS5 client using hostname-based CONNECT (DNS is resolved server-side)
-4. Client multiplexes traffic over WebSocket to the server
-
-**Important:** The TUN IP ranges `198.18.0.0/16` and `fd00::/64` must not conflict with your local network.
-
 ## Requirements
 
-- Rust 1.85+ (edition 2024)
-- For TUN mode:
-  - Linux: TUN/TAP support, iproute2, sudo access
-  - macOS: sudo access, utun interface support (macOS 10.13+)
-  - Windows: Administrator privileges, wintun.dll (included in release)
-- For ICMP passthrough on the server: `CAP_NET_RAW` or root (Linux)
+- Rust 1.85+ (edition 2024) for building from source
+- TUN mode: TUN/TAP support + root/admin privileges
+- Server ICMP: `CAP_NET_RAW` or root (Linux)
 
 ## License
 
