@@ -5,9 +5,9 @@ A self-hosted transparent proxy suite that tunnels all system traffic through en
 ## Features
 
 - **WebSocket transport** — Tunnel traffic through Cloudflare Workers or any WebSocket endpoint
-- **Stream multiplexing** — Multiple TCP/UDP/ICMP streams share a single WebSocket connection
+- **Stream multiplexing** — Multiple TCP/UDP/ICMP streams share a single WebSocket connection with per-stream rate tracking and three-level priority QoS (control > interactive > bulk)
 - **Connection handling** — Client retries with exponential backoff and unlimited retries; outbound IP can be bound explicitly when needed
-- **TUN transparent proxy** — Route all system traffic through the proxy via built-in TUN forwarder
+- **TUN transparent proxy** — Route all system traffic through the proxy via built-in TUN forwarder; infrastructure and service tasks are isolated so a single protocol failure doesn't tear down the whole tunnel
 - **ICMP passthrough** — Ping (IPv4 and IPv6) works through the proxy
 - **Cross-platform** — Linux, macOS, and Windows support
 
@@ -47,13 +47,13 @@ export ALL_PROXY=socks5://127.0.0.1:1080
 
 Download the latest release from GitHub:
 
-- **Linux**: `omni-proxy-linux-x86_64-musl.zip`
+- **Linux**: `omni-proxy-linux-x86_64.tar.xz`
 - **Windows**: `omni-proxy-windows-x86_64-msvc.zip`
-- **macOS**: `omni-proxy-macos-x86_64.zip` or `omni-proxy-macos-aarch64.zip`
+- **macOS**: `omni-proxy-macos-x86_64.tar.xz` or `omni-proxy-macos-aarch64.tar.xz`
 
-Each zip contains: `client`, `server`, `proxy`, `config.yml`, `README.md`, and `setup_macos.sh` (macOS only).
+Each archive contains: `client`, `server`, `proxy`, `config.yml`, and `README.md`. macOS archives include `setup_macos.sh`.
 
-**One-time setup:** Extract the zip to any directory. Edit `config.yml` once — the `client` binary is resolved relative to the `proxy` binary location, so `./client` works out of the box.
+**One-time setup:** Extract the archive to any directory. Edit `config.yml` once — the `client` binary is resolved relative to the `proxy` binary location, so `./client` works out of the box.
 
 **macOS:** Run `./setup_macos.sh` once to bypass Gatekeeper security restrictions (removes quarantine attributes and ad-hoc signs binaries).
 
@@ -113,11 +113,11 @@ phys_iface: ""
 Browser/App → SOCKS5 client (127.0.0.1:1080) → WebSocket → server → target
 ```
 
-**client**: SOCKS5 proxy server that multiplexes all streams over a persistent WebSocket connection to the server. Supports TCP, UDP, and ICMP (ping). Handles reconnection with exponential backoff.
+**client**: SOCKS5 proxy server that multiplexes all streams over a persistent WebSocket connection to the server. Supports TCP, UDP, and ICMP (ping). Handles reconnection with exponential backoff. Outbound frames are prioritized: control frames (CONNECT/FIN) always go first, interactive data (SSH, DNS) is prioritized over bulk transfers (downloads, speed tests). Per-stream send rate is tracked every 16 frames and streams are dynamically reclassified between interactive and bulk queues.
 
-**server**: WebSocket relay that demultiplexes streams and bridges to target TCP/UDP endpoints. Enforces a 4096-stream concurrency limit.
+**server**: WebSocket relay that demultiplexes streams and bridges to target TCP/UDP endpoints. Enforces a 4096-stream concurrency limit. Per-stream backpressure with 5s timeout prevents a slow stream from blocking the entire session.
 
-**proxy**: Transparent proxy manager. Sets up TUN interface, routing rules, and launches the client with a built-in TUN forwarder.
+**proxy**: Transparent proxy manager. Sets up TUN interface, routing rules, and launches the client with a built-in TUN forwarder. Infrastructure tasks (TUN read/write, netstack) are separated from service tasks (TCP/UDP/ICMP handlers) — a single protocol failure only loses that protocol, not the entire tunnel.
 
 ## Protocol
 

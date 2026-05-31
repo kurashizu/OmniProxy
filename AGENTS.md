@@ -13,6 +13,7 @@
 - **Check**: `cargo check`
 - **Format**: `cargo fmt` / `cargo fmt --check`
 - **Clippy**: `cargo clippy -- -D warnings`
+- **Console feature** (tokio-console): requires `RUSTFLAGS="--cfg tokio_unstable"` and `--features console`. CI uses this for client and server builds. Not used in proxy.
 - **Windows cross-compile check**: `cargo check -p server -p client --target x86_64-pc-windows-gnu`
 
 ## Architecture Notes
@@ -23,6 +24,17 @@
 - `encode_frame_bytes(stream_id, typ, payload: Bytes)` — use for Bytes payloads to avoid double-copy
 - `decode_udp_payload(payload: &Bytes)`, `decode_icmp_payload(payload: &[u8])` — decode helpers
 
+### Client MUX (`client/src/mux.rs`)
+- Multiplexes all TCP/UDP/ICMP streams over a single WebSocket connection.
+- **Three priority channels** for outbound frames:
+  - `frame_hi` (cap 64): control frames — CONNECT, FIN, ICMP register. Strict priority.
+  - `frame_mi` (cap 256): low-volume data (interactive traffic).
+  - `frame_lo` (cap 1024): high-volume data (bulk transfers).
+- Writer drains hi → mi (max 16/frame iteration) → lo. `biased select!` ensures hi is always checked first.
+- **Per-stream rate tracking** (`RateTracker`): every 16 frames, checks accumulated bytes. ≥100KB/s → reclassify to lo, ≤10KB/s → reclassify to mi. Thresholds: `RATE_HI_THRESHOLD`, `RATE_LO_THRESHOLD`.
+- **Stream ID allocation** (`alloc_id_locked`): collision detection loop checks all four HashMaps (`streams`, `connect_notify`, `udp_txs`, `icmp_txs`, `rate_trackers`). Alloc + insert happen inside the same `write()` lock to eliminate TOCTOU.
+- `frame_tx` is the old single-channel name — now uses `frame_hi`/`frame_mi`/`frame_lo`. All `send_*` methods clone the sender from `MuxInner` under `read()` lock, then send without holding the lock.
+
 ### Client ↔ Server Communication
 - Client connects via secure WebSocket to server.
 - `client` registers streams with `server` via `TYPE_TCP_CONNECT / TYPE_UDP_DATA / TYPE_ICMP_DATA` frames.
@@ -30,12 +42,18 @@
 - Server `session.rs` is the WebSocket session multiplexer; it dispatches frames to TCP/UDP/ICMP handlers.
 - Server uses `DashMap<u32, ...>` for stream, UDP socket, and ICMP stream tables.
 - Server uses `tokio::sync::Semaphore` (4096 permits) to limit concurrent streams.
+- **Server TCP backpressure**: `tx.send(payload)` is wrapped in `tokio::time::timeout(5s, ...)`. If a stream's channel is full for >5s, the stream is dropped rather than blocking the entire session mux.
+- **Server UDP bind atomicity**: `udp_sockets.entry(stream_id)` directly — no `get()` then `entry()` two-phase pattern (was a race window).
 
 ### Proxy Architecture
 - `proxy` runs `netstack-smoltcp` as the TUN interface's network stack.
 - ICMP packets are intercepted **before** the netstack via the `icmp::IcmpHandler` in `proxy/src/forwarder/icmp.rs`.
 - ICMP passthrough uses a custom SOCKS5 CMD=0xA1 over a dedicated TCP connection.
 - UDP sessions are relay-based: proxy binds a local UDP socket and relays via SOCKS5 UDP ASSOCIATE.
+- **Forwarder task separation** (`proxy/src/forwarder/mod.rs`):
+  - Infrastructure tasks (`tun_to_stack`, `stack_to_tun`, `tun_writer`) — exit means TUN/netstack is broken, triggers full restart via `stack.rs`.
+  - Service tasks (`tcp_task`, `udp_task`, `icmp_task`) — exit does NOT trigger restart. Wrapped in `tokio::select!` with a broadcast shutdown channel. ICMP exit only loses ping, TCP/UDP survive.
+  - Infrastructure `select!` fires → `shutdown_tx.send(())` → sleep 1s → return `Ok(())` → `stack.rs` restart loop handles tun_down/tun_up.
 
 ### Platform-Specific
 - `server/src/icmp/` — raw ICMP socket code, **Unix-only** (`#[cfg(unix)]`). Windows builds use a stub that logs a warning.
@@ -44,7 +62,6 @@
 
 ### Client Reconnect
 - On WebSocket disconnect, client uses **exponential backoff** (1s → 2s → ... → 30s cap) with **infinite retries**.
-- Previously had a 5-retry cap; the cap was removed in v1.0.3-beta.2.
 
 ## Code Style
 - Standard rustfmt defaults (no custom `rustfmt.toml`).
