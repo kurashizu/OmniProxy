@@ -76,37 +76,21 @@ fn detect_auto() -> Result<IpAddr> {
 
 #[cfg(windows)]
 fn detect_auto() -> Result<IpAddr> {
-    fn get_iface_ipv4(iface: &str) -> Result<IpAddr> {
-        let script = format!(
-            "Get-NetIPAddress -InterfaceAlias '{}' -AddressFamily IPv4 -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty IPAddress",
-            iface.replace('\'', "''")
-        );
-        let out = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-Command", &script])
-            .output()
-            .context("powershell get IP")?;
-        let ip_str = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        if ip_str.is_empty() {
-            anyhow::bail!("no IPv4 address found for interface '{iface}'");
-        }
-        ip_str.parse::<IpAddr>().with_context(|| {
-            format!("parse IP: got '{}'", ip_str.escape_debug())
-        })
-    }
-
-    let script = r#"Get-NetRoute -DestinationPrefix '0.0.0.0/0' | Where-Object {
+    let script = r#"$route = Get-NetRoute -DestinationPrefix '0.0.0.0/0' | Where-Object {
         $type = (Get-NetAdapter -InterfaceIndex $_.InterfaceIndex -ErrorAction SilentlyContinue).InterfaceDescription
         $type -notmatch 'TAP|TUN|Wintun|WireGuard|OpenVPN|VPN|Tunnel'
-    } | Sort-Object RouteMetric | Select-Object -First 1 | ForEach-Object { $_.InterfaceAlias }"#;
+    } | Sort-Object RouteMetric | Select-Object -First 1
+    if (-not $route) { exit 1 }
+    Get-NetIPAddress -InterfaceIndex $route.InterfaceIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty IPAddress"#;
     let out = std::process::Command::new("powershell")
         .args(["-NoProfile", "-Command", script])
         .output()
         .context("powershell")?;
-    let iface = String::from_utf8_lossy(&out.stdout).trim().to_string();
-
-    if iface.is_empty() {
-        anyhow::bail!("failed to detect physical interface from powershell output");
+    let ip_str = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if ip_str.is_empty() {
+        anyhow::bail!("failed to detect physical IP from powershell (exit={})", out.status.code().unwrap_or(-1));
     }
-
-    get_iface_ipv4(&iface)
+    ip_str.parse::<IpAddr>().with_context(|| {
+        format!("parse IP: got '{}'", ip_str.escape_debug())
+    })
 }
