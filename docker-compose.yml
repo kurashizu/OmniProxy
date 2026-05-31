@@ -8,8 +8,8 @@ services:
       - "${SERVER_PORT:-9880}:9880"
     environment:
       - SERVER_TOKEN=${SERVER_TOKEN:-}
-      - SERVER_ADDR=0.0.0.0
-      - SERVER_PORT=9880
+      - SERVER_ADDR=${SERVER_ADDR:-0.0.0.0}
+      - SERVER_PORT=${SERVER_PORT:-9880}
     cap_add:
       - NET_RAW
     restart: unless-stopped

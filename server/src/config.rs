@@ -39,28 +39,51 @@ fn default_port() -> u16 {
     9880
 }
 
+impl Default for Config {
+    fn default() -> Self {
+        Config {
+            addr: default_addr(),
+            port: default_port(),
+            token: String::new(),
+        }
+    }
+}
+
 impl Config {
     fn from_cli(cli: Cli) -> Result<Self> {
-        if let Some(path) = cli.config {
+        // load base config from file if specified
+        let mut cfg = if let Some(path) = cli.config {
             let text = std::fs::read_to_string(&path)
                 .with_context(|| format!("Failed to read config file: {path}"))?;
-            return serde_yaml::from_str(&text)
-                .with_context(|| format!("Failed to parse config file: {path}"));
+            serde_yaml::from_str::<Config>(&text)
+                .with_context(|| format!("Failed to parse config file: {path}"))?
+        } else {
+            Config::default()
+        };
+
+        // env overrides file
+        if let Ok(addr) = std::env::var("SERVER_ADDR") {
+            cfg.addr = addr;
+        }
+        if let Some(port_str) = std::env::var("SERVER_PORT").ok() {
+            cfg.port = port_str.parse().context("invalid SERVER_PORT")?;
+        }
+        if let Ok(token) = std::env::var("SERVER_TOKEN") {
+            cfg.token = token;
         }
 
-        let addr = cli.addr
-            .or_else(|| std::env::var("SERVER_ADDR").ok())
-            .unwrap_or_else(default_addr);
+        // CLI overrides env
+        if let Some(addr) = cli.addr {
+            cfg.addr = addr;
+        }
+        if let Some(port) = cli.port {
+            cfg.port = port;
+        }
+        if let Some(token) = cli.token {
+            cfg.token = token;
+        }
 
-        let port = cli.port
-            .or_else(|| std::env::var("SERVER_PORT").ok().and_then(|p| p.parse().ok()))
-            .unwrap_or_else(default_port);
-
-        let token = cli.token
-            .or_else(|| std::env::var("SERVER_TOKEN").ok())
-            .unwrap_or_default();
-
-        Ok(Config { addr, port, token })
+        Ok(cfg)
     }
 
     pub(crate) fn load() -> Result<Self> {
