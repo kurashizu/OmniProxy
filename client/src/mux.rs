@@ -16,6 +16,66 @@ use protocol::{
     encode_frame_bytes, encode_udp_payload,
 };
 
+const RATE_CHECK_INTERVAL: u64 = 16; // check every N frames
+const RATE_HI_THRESHOLD: u64 = 100 * 1024; // 100 KB/s
+const RATE_LO_THRESHOLD: u64 = 10 * 1024; // 10 KB/s
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StreamPriority {
+    Mi, // low-volume, latency-sensitive
+    Lo, // high-volume, bulk
+}
+
+struct RateTracker {
+    bytes: AtomicU64,
+    frames: AtomicU64,
+    window_start: std::sync::Mutex<Instant>,
+    priority: std::sync::Mutex<StreamPriority>,
+}
+
+impl RateTracker {
+    fn new() -> Self {
+        Self {
+            bytes: AtomicU64::new(0),
+            frames: AtomicU64::new(0),
+            window_start: std::sync::Mutex::new(Instant::now()),
+            priority: std::sync::Mutex::new(StreamPriority::Mi),
+        }
+    }
+
+    fn record(&self, n: u64) {
+        self.bytes.fetch_add(n, Ordering::Relaxed);
+        let f = self.frames.fetch_add(1, Ordering::Relaxed) + 1;
+        if f.is_multiple_of(RATE_CHECK_INTERVAL) {
+            self.reclassify();
+        }
+    }
+
+    fn reclassify(&self) {
+        let mut start = self.window_start.lock().unwrap();
+        let elapsed_ms = start.elapsed().as_millis() as u64;
+        if elapsed_ms == 0 {
+            return;
+        }
+        let bytes = self.bytes.swap(0, Ordering::Relaxed);
+        self.frames.store(0, Ordering::Relaxed);
+        let rate = bytes * 1000 / elapsed_ms;
+        let mut pri = self.priority.lock().unwrap();
+        *pri = if rate >= RATE_HI_THRESHOLD {
+            StreamPriority::Lo
+        } else if rate <= RATE_LO_THRESHOLD {
+            StreamPriority::Mi
+        } else {
+            *pri
+        };
+        *start = Instant::now();
+    }
+
+    fn priority(&self) -> StreamPriority {
+        *self.priority.lock().unwrap()
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct StreamMeta {
     pub id: u32,
@@ -82,7 +142,10 @@ pub(crate) struct MuxInner {
     connect_notify: HashMap<u32, oneshot::Sender<Result<()>>>,
     udp_txs: HashMap<u32, mpsc::Sender<(String, u16, bytes::Bytes)>>,
     icmp_txs: HashMap<u32, mpsc::Sender<(String, bytes::Bytes)>>,
-    frame_tx: Option<mpsc::Sender<bytes::Bytes>>,
+    rate_trackers: HashMap<u32, Arc<RateTracker>>,
+    frame_hi: Option<mpsc::Sender<bytes::Bytes>>,
+    frame_mi: Option<mpsc::Sender<bytes::Bytes>>,
+    frame_lo: Option<mpsc::Sender<bytes::Bytes>>,
     stream_info: HashMap<u32, StreamMeta>,
 }
 
@@ -93,7 +156,10 @@ impl MuxInner {
             connect_notify: HashMap::new(),
             udp_txs: HashMap::new(),
             icmp_txs: HashMap::new(),
-            frame_tx: None,
+            rate_trackers: HashMap::new(),
+            frame_hi: None,
+            frame_mi: None,
+            frame_lo: None,
             stream_info: HashMap::new(),
         }
     }
@@ -103,7 +169,10 @@ impl MuxInner {
         self.connect_notify.clear();
         self.udp_txs.clear();
         self.icmp_txs.clear();
-        self.frame_tx = None;
+        self.rate_trackers.clear();
+        self.frame_hi = None;
+        self.frame_mi = None;
+        self.frame_lo = None;
         self.stream_info.clear();
     }
 
@@ -192,24 +261,77 @@ impl Mux {
                 && !inner.connect_notify.contains_key(&id)
                 && !inner.udp_txs.contains_key(&id)
                 && !inner.icmp_txs.contains_key(&id)
+                && !inner.rate_trackers.contains_key(&id)
             {
                 return id;
             }
         }
     }
 
-    async fn frame_tx(&self) -> Option<mpsc::Sender<bytes::Bytes>> {
-        self.inner.read().await.frame_tx.clone()
-    }
-
-    async fn send_frame(&self, frame: bytes::Bytes) -> Result<()> {
+    async fn send_hi(&self, frame: bytes::Bytes) -> Result<()> {
         let len = frame.len() as u64;
-        let tx = self.frame_tx().await.context("ws not connected")?;
+        let tx = self
+            .inner
+            .read()
+            .await
+            .frame_hi
+            .clone()
+            .context("ws not connected")?;
         tx.send(frame)
             .await
             .map_err(|_| anyhow::anyhow!("ws writer closed"))?;
         self.stats.bytes_tx.fetch_add(len, Ordering::Relaxed);
         Ok(())
+    }
+
+    async fn send_mi(&self, frame: bytes::Bytes) -> Result<()> {
+        let len = frame.len() as u64;
+        let tx = self
+            .inner
+            .read()
+            .await
+            .frame_mi
+            .clone()
+            .context("ws not connected")?;
+        tx.send(frame)
+            .await
+            .map_err(|_| anyhow::anyhow!("ws writer closed"))?;
+        self.stats.bytes_tx.fetch_add(len, Ordering::Relaxed);
+        Ok(())
+    }
+
+    async fn send_lo(&self, frame: bytes::Bytes) -> Result<()> {
+        let len = frame.len() as u64;
+        let tx = self
+            .inner
+            .read()
+            .await
+            .frame_lo
+            .clone()
+            .context("ws not connected")?;
+        tx.send(frame)
+            .await
+            .map_err(|_| anyhow::anyhow!("ws writer closed"))?;
+        self.stats.bytes_tx.fetch_add(len, Ordering::Relaxed);
+        Ok(())
+    }
+
+    async fn send_data_with_rate(&self, id: u32, frame: bytes::Bytes) -> Result<()> {
+        let tracker = {
+            let inner = self.inner.read().await;
+            inner.rate_trackers.get(&id).cloned()
+        };
+        match tracker {
+            Some(tracker) => {
+                let payload_len = frame.len() as u64;
+                tracker.record(payload_len);
+                match tracker.priority() {
+                    StreamPriority::Mi => self.send_mi(frame).await,
+                    StreamPriority::Lo => self.send_lo(frame).await,
+                }
+            }
+            None => self.send_mi(frame).await,
+        }
     }
 
     /// Establish WS connection. If outbound_ip bind fails (e.g. network change
@@ -220,17 +342,73 @@ impl Mux {
         debug!("ws connected");
 
         let (ws_tx, ws_rx) = ws.split();
-        let (frame_tx, mut frame_rx) = mpsc::channel::<bytes::Bytes>(1024);
+        // Three priority channels:
+        //   hi: control (connect/fin/icmp register) — capacity 64
+        //   mi: low-volume interactive data — capacity 256
+        //   lo: high-volume bulk data — capacity 1024
+        let (hi_tx, mut hi_rx) = mpsc::channel::<bytes::Bytes>(64);
+        let (mi_tx, mut mi_rx) = mpsc::channel::<bytes::Bytes>(256);
+        let (lo_tx, mut lo_rx) = mpsc::channel::<bytes::Bytes>(1024);
 
         let writer = tokio::spawn(async move {
             let mut ws_tx = ws_tx;
             let mut hb = tokio::time::interval(Duration::from_secs(20));
             hb.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            const MI_LIMIT: usize = 16;
             loop {
+                // Drain hi completely before touching mi/lo
+                while let Ok(f) = hi_rx.try_recv() {
+                    if ws_tx.send(Message::Binary(f)).await.is_err() {
+                        return;
+                    }
+                }
+                // Drain mi with a limit so lo is not starved
+                let mut mi_drained = 0usize;
+                loop {
+                    if mi_drained >= MI_LIMIT {
+                        break;
+                    }
+                    match mi_rx.try_recv() {
+                        Ok(f) => {
+                            mi_drained += 1;
+                            if ws_tx.send(Message::Binary(f)).await.is_err() {
+                                return;
+                            }
+                        }
+                        Err(_) => break,
+                    }
+                }
+                // Drain lo
+                while let Ok(f) = lo_rx.try_recv() {
+                    if ws_tx.send(Message::Binary(f)).await.is_err() {
+                        return;
+                    }
+                }
+                // Wait for next event
                 tokio::select! {
-                    frame = frame_rx.recv() => match frame {
+                    biased;
+                    f = hi_rx.recv() => match f {
                         Some(f) => { if ws_tx.send(Message::Binary(f)).await.is_err() { break; } }
                         None    => break,
+                    },
+                    f = mi_rx.recv() => match f {
+                        Some(f) => {
+                            // Drain any hi that arrived while waiting
+                            while let Ok(h) = hi_rx.try_recv() {
+                                if ws_tx.send(Message::Binary(h)).await.is_err() { return; }
+                            }
+                            if ws_tx.send(Message::Binary(f)).await.is_err() { break; }
+                        }
+                        None => break,
+                    },
+                    f = lo_rx.recv() => match f {
+                        Some(f) => {
+                            while let Ok(h) = hi_rx.try_recv() {
+                                if ws_tx.send(Message::Binary(h)).await.is_err() { return; }
+                            }
+                            if ws_tx.send(Message::Binary(f)).await.is_err() { break; }
+                        }
+                        None => break,
                     },
                     _ = hb.tick() => {
                         if ws_tx.send(Message::Ping(bytes::Bytes::new())).await.is_err() { break; }
@@ -242,7 +420,10 @@ impl Mux {
 
         self.stats.ws_connected.store(true, Ordering::Relaxed);
         {
-            self.inner.write().await.frame_tx = Some(frame_tx);
+            let mut inner = self.inner.write().await;
+            inner.frame_hi = Some(hi_tx);
+            inner.frame_mi = Some(mi_tx);
+            inner.frame_lo = Some(lo_tx);
         }
 
         let (disc_tx, disc_rx) = oneshot::channel::<()>();
@@ -364,6 +545,7 @@ impl Mux {
             let mut inner = self.inner.write().await;
             let id = Self::alloc_id_locked(&self.next_id, &inner);
             inner.streams.insert(id, data_tx);
+            inner.rate_trackers.insert(id, Arc::new(RateTracker::new()));
             inner
                 .stream_info
                 .insert(id, StreamMeta::tcp(id, target.to_owned(), String::new()));
@@ -371,23 +553,22 @@ impl Mux {
             id
         };
         debug!(id, target, "tcp connect");
-        self.send_frame(encode_frame(id, TYPE_TCP_CONNECT, target.as_bytes()))
+        self.send_hi(encode_frame(id, TYPE_TCP_CONNECT, target.as_bytes()))
             .await?;
         Ok((id, data_rx, conn_rx))
     }
 
     pub(crate) async fn tcp_data(&self, id: u32, data: bytes::Bytes) -> Result<()> {
-        self.send_frame(encode_frame_bytes(id, TYPE_TCP_DATA, data))
+        self.send_data_with_rate(id, encode_frame_bytes(id, TYPE_TCP_DATA, data))
             .await
     }
 
     pub(crate) async fn tcp_fin(&self, id: u32) {
         debug!(id, "tcp fin");
-        self.send_frame(encode_frame(id, TYPE_TCP_FIN, &[]))
-            .await
-            .ok();
+        self.send_hi(encode_frame(id, TYPE_TCP_FIN, &[])).await.ok();
         let mut inner = self.inner.write().await;
         inner.streams.remove(&id);
+        inner.rate_trackers.remove(&id);
         inner.stream_info.remove(&id);
     }
 
@@ -417,7 +598,7 @@ impl Mux {
     ) -> Result<()> {
         debug!(stream_id, host, port, "udp send");
         let payload = encode_udp_payload(host, port, data);
-        self.send_frame(encode_frame_bytes(stream_id, TYPE_UDP_DATA, payload))
+        self.send_mi(encode_frame_bytes(stream_id, TYPE_UDP_DATA, payload))
             .await
     }
 
@@ -441,14 +622,13 @@ impl Mux {
             inner.connect_notify.insert(id, conn_tx);
             id
         };
-        self.send_frame(encode_frame(id, TYPE_ICMP_DATA, target.as_bytes()))
+        self.send_hi(encode_frame(id, TYPE_ICMP_DATA, target.as_bytes()))
             .await?;
         Ok((id, rx, conn_rx))
     }
 
     pub(crate) async fn icmp_data(&self, id: u32, data: bytes::Bytes) -> Result<()> {
-        self.send_frame(encode_frame(id, TYPE_ICMP_DATA, &data))
-            .await
+        self.send_mi(encode_frame(id, TYPE_ICMP_DATA, &data)).await
     }
 
     pub(crate) async fn icmp_unregister(&self, id: u32) {
