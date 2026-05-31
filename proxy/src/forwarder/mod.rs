@@ -11,6 +11,7 @@ use netstack_smoltcp::{Stack, StackBuilder, TcpListener, UdpSocket};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
+use tokio::time::Duration;
 use tracing::{debug, info, warn};
 use tun_device::TunDevice;
 use tun_rs::async_framed::BytesCodec;
@@ -73,6 +74,9 @@ impl Forwarder {
         let (tun_write_tx, mut tun_write_rx) = mpsc::channel::<BytesMut>(8192);
         let (icmp_tun_tx, mut icmp_tun_rx) = mpsc::channel::<BytesMut>(256);
 
+        // Shutdown broadcast: signals service tasks to exit when infra dies
+        let (shutdown_tx, _) = tokio::sync::broadcast::channel::<()>(1);
+
         // TUN writer task: merges TCP/UDP and ICMP reply streams
         let tun_writer = tokio::spawn(async move {
             loop {
@@ -131,10 +135,15 @@ impl Forwarder {
             }
         });
 
-        // ICMP handler task: receives outbound ICMP from TUN, manages SOCKS5 sessions,
-        // reads inbound ICMP replies from SOCKS5, rebuilds IP packets, writes to TUN
-        let icmp_task = tokio::spawn(async move {
-            icmp_handler.run().await;
+        // ICMP handler task: non-critical, exit does not trigger full restart
+        let mut icmp_shutdown = shutdown_tx.subscribe();
+        tokio::spawn(async move {
+            tokio::select! {
+                _ = icmp_handler.run() => {
+                    warn!("[forwarder] icmp handler exited (non-critical)");
+                }
+                _ = icmp_shutdown.recv() => {}
+            }
         });
 
         // stack -> TUN
@@ -155,44 +164,59 @@ impl Forwarder {
             }
         });
 
-        // Handle TCP connections (infinite accept loop — only exits on listener close)
+        // TCP accept task: non-critical, exit does not trigger full restart
         let socks_port = self.socks_port;
         let mut tcp_listener = self
             .tcp_listener
             .take()
             .expect("tcp_listener already taken");
-        let tcp_task = tokio::spawn(async move {
-            while let Some((stream, _src, dst)) = tcp_listener.next().await {
-                let sp = socks_port;
-                tokio::spawn(async move {
-                    if let Err(e) = handle_tcp_via_socks5(stream, dst, sp).await {
-                        debug!("[session] tcp {dst}: {e}");
+        let mut tcp_shutdown = shutdown_tx.subscribe();
+        tokio::spawn(async move {
+            tokio::select! {
+                _ = async {
+                    while let Some((stream, _src, dst)) = tcp_listener.next().await {
+                        let sp = socks_port;
+                        tokio::spawn(async move {
+                            if let Err(e) = handle_tcp_via_socks5(stream, dst, sp).await {
+                                debug!("[session] tcp {dst}: {e}");
+                            }
+                        });
                     }
-                });
+                    warn!("[forwarder] tcp listener closed");
+                } => {}
+                _ = tcp_shutdown.recv() => {}
             }
-            warn!("[forwarder] tcp listener closed");
         });
 
-        // Handle UDP
+        // UDP task: non-critical, exit does not trigger full restart
         let udp_socket = self.udp_socket.take().expect("udp_socket already taken");
         let (udp_read, udp_write) = udp_socket.split();
         let socks_port = self.socks_port;
-        let udp_task = tokio::spawn(async move {
-            if let Err(e) = udp::run_udp_handler(udp_read, udp_write, socks_port).await {
-                warn!("[forwarder] udp handler: {e}");
+        let mut udp_shutdown = shutdown_tx.subscribe();
+        tokio::spawn(async move {
+            tokio::select! {
+                r = udp::run_udp_handler(udp_read, udp_write, socks_port) => {
+                    warn!("[forwarder] udp handler exited: {:?}", r);
+                }
+                _ = udp_shutdown.recv() => {}
             }
         });
 
         info!("[forwarder] running");
 
+        // Only infrastructure tasks trigger full restart.
+        // Service tasks (tcp/udp/icmp) are fire-and-forget — they die on shutdown.
         tokio::select! {
             _ = tun_to_stack => warn!("[forwarder] tun->stack died"),
             _ = stack_to_tun => warn!("[forwarder] stack->tun died"),
-            _ = tcp_task      => warn!("[forwarder] tcp handler died"),
-            _ = udp_task      => warn!("[forwarder] udp handler died"),
-            _ = icmp_task     => warn!("[forwarder] icmp handler died"),
             _ = tun_writer    => warn!("[forwarder] tun writer died"),
         }
+
+        // Signal service tasks to exit
+        let _ = shutdown_tx.send(());
+
+        // Give service tasks a moment to drain
+        tokio::time::sleep(Duration::from_secs(1)).await;
 
         Ok(())
     }
@@ -229,9 +253,21 @@ async fn handle_tcp_via_socks5(
     req.extend_from_slice(&dst.port().to_be_bytes());
     socks.write_all(&req).await?;
 
-    let mut resp = [0u8; 10];
-    socks.read_exact(&mut resp).await?;
-    anyhow::ensure!(resp[1] == 0x00, "SOCKS5 CONNECT failed: {}", resp[1]);
+    let mut hdr = [0u8; 4];
+    socks.read_exact(&mut hdr).await?;
+    anyhow::ensure!(hdr[1] == 0x00, "SOCKS5 CONNECT failed: {}", hdr[1]);
+    let skip = match hdr[3] {
+        0x01 => 4 + 2,
+        0x04 => 16 + 2,
+        0x03 => {
+            let mut len = [0u8; 1];
+            socks.read_exact(&mut len).await?;
+            len[0] as usize + 2
+        }
+        t => anyhow::bail!("unknown ATYP {t:#x}"),
+    };
+    let mut tail = vec![0u8; skip];
+    socks.read_exact(&mut tail).await?;
 
     info!("[session] SOCKS5 CONNECT to {} ok", dst);
 

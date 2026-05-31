@@ -182,8 +182,20 @@ impl Mux {
         Err(last_err.unwrap_or_else(|| anyhow::anyhow!("connection failed")))
     }
 
-    fn alloc_id(&self) -> u32 {
-        self.next_id.fetch_add(1, Ordering::Relaxed)
+    fn alloc_id_locked(next: &AtomicU32, inner: &MuxInner) -> u32 {
+        loop {
+            let id = next.fetch_add(1, Ordering::Relaxed);
+            if id == 0 {
+                continue;
+            }
+            if !inner.streams.contains_key(&id)
+                && !inner.connect_notify.contains_key(&id)
+                && !inner.udp_txs.contains_key(&id)
+                && !inner.icmp_txs.contains_key(&id)
+            {
+                return id;
+            }
+        }
     }
 
     async fn frame_tx(&self) -> Option<mpsc::Sender<bytes::Bytes>> {
@@ -346,18 +358,19 @@ impl Mux {
         mpsc::Receiver<bytes::Bytes>,
         oneshot::Receiver<Result<()>>,
     )> {
-        let id = self.alloc_id();
-        debug!(id, target, "tcp connect");
         let (data_tx, data_rx) = mpsc::channel::<bytes::Bytes>(1024);
         let (conn_tx, conn_rx) = oneshot::channel::<Result<()>>();
-        {
+        let id = {
             let mut inner = self.inner.write().await;
+            let id = Self::alloc_id_locked(&self.next_id, &inner);
             inner.streams.insert(id, data_tx);
             inner
                 .stream_info
                 .insert(id, StreamMeta::tcp(id, target.to_owned(), String::new()));
             inner.connect_notify.insert(id, conn_tx);
-        }
+            id
+        };
+        debug!(id, target, "tcp connect");
         self.send_frame(encode_frame(id, TYPE_TCP_CONNECT, target.as_bytes()))
             .await?;
         Ok((id, data_rx, conn_rx))
@@ -379,9 +392,9 @@ impl Mux {
     }
 
     pub(crate) async fn register_udp(&self) -> (u32, mpsc::Receiver<(String, u16, bytes::Bytes)>) {
-        let id = self.alloc_id();
         let (tx, rx) = mpsc::channel(256);
         let mut inner = self.inner.write().await;
+        let id = Self::alloc_id_locked(&self.next_id, &inner);
         inner.udp_txs.insert(id, tx);
         inner
             .stream_info
@@ -416,17 +429,18 @@ impl Mux {
         mpsc::Receiver<(String, bytes::Bytes)>,
         oneshot::Receiver<Result<()>>,
     )> {
-        let id = self.alloc_id();
         let (tx, rx) = mpsc::channel(256);
         let (conn_tx, conn_rx) = oneshot::channel();
-        {
+        let id = {
             let mut inner = self.inner.write().await;
+            let id = Self::alloc_id_locked(&self.next_id, &inner);
             inner.icmp_txs.insert(id, tx);
             inner
                 .stream_info
                 .insert(id, StreamMeta::icmp(id, target.to_owned(), String::new()));
             inner.connect_notify.insert(id, conn_tx);
-        }
+            id
+        };
         self.send_frame(encode_frame(id, TYPE_ICMP_DATA, target.as_bytes()))
             .await?;
         Ok((id, rx, conn_rx))

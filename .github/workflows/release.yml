@@ -114,102 +114,9 @@ jobs:
                   if-no-files-found: error
                   retention-days: 2
 
-    # ── Build GUI ─────────────────────────────────────────────────────
-    build-gui:
-        strategy:
-            matrix:
-                include:
-                    - target: x86_64-pc-windows-msvc
-                      os: windows-latest
-                      ext: .exe
-                      name: windows-x86_64
-
-                    - target: aarch64-pc-windows-msvc
-                      os: windows-11-arm
-                      ext: .exe
-                      name: windows-aarch64
-
-                    - target: x86_64-unknown-linux-gnu
-                      os: ubuntu-latest
-                      ext: ""
-                      name: linux-x86_64
-
-                    - target: aarch64-unknown-linux-gnu
-                      os: ubuntu-24.04-arm
-                      ext: ""
-                      name: linux-aarch64
-
-                    - target: x86_64-apple-darwin
-                      os: macos-latest
-                      ext: ""
-                      name: macos-x86_64
-
-                    - target: aarch64-apple-darwin
-                      os: macos-latest
-                      ext: ""
-                      name: macos-aarch64
-
-        runs-on: ${{ matrix.os }}
-
-        steps:
-            - uses: actions/checkout@v6
-
-            - name: Install Rust
-              uses: dtolnay/rust-toolchain@stable
-              with:
-                  targets: ${{ matrix.target }}
-
-            - name: Install system dependencies (Linux)
-              if: startsWith(matrix.name, 'linux')
-              run: |
-                  sudo apt-get update
-                  sudo apt-get install -y \
-                      libxcb-shape0-dev libxcb-xfixes0-dev \
-                      libxcb1-dev libxkbcommon-dev \
-                      libgl1-mesa-dev libegl1-mesa-dev \
-                      fuse libfuse2
-              shell: bash
-
-            - name: Cache cargo
-              uses: Swatinem/rust-cache@v2
-              with:
-                  workspaces: "."
-
-            - name: Build GUI
-              run: cargo build -p gui --release --target ${{ matrix.target }}
-
-            - name: Set executable permissions
-              run: chmod +x target/${{ matrix.target }}/release/OmniProxy
-              shell: bash
-
-            - name: Ad-hoc sign (macOS)
-              if: matrix.os == 'macos-latest'
-              run: codesign --force --sign - target/${{ matrix.target }}/release/OmniProxy
-              shell: bash
-
-            - name: Bundle .app (macOS)
-              if: matrix.os == 'macos-latest'
-              run: bash scripts/bundle_gui.sh target/${{ matrix.target }}/release gui/icon.png
-
-            - name: Bundle AppImage (Linux x86_64)
-              if: matrix.name == 'linux-x86_64'
-              run: bash scripts/bundle_appimage.sh target/${{ matrix.target }}/release gui/icon.png
-              shell: bash
-
-            - name: Upload GUI artifacts
-              uses: actions/upload-artifact@v7
-              with:
-                  name: gui-${{ matrix.name }}
-                  path: |
-                      target/${{ matrix.target }}/release/OmniProxy${{ matrix.ext }}
-                      target/${{ matrix.target }}/release/*.app/
-                      target/${{ matrix.target }}/release/*.AppImage
-                  if-no-files-found: error
-                  retention-days: 2
-
     # ── Package ───────────────────────────────────────────────────────
     package:
-        needs: [build, build-gui]
+        needs: [build]
         strategy:
             matrix:
                 include:
@@ -261,13 +168,6 @@ jobs:
                   path: cli
                   merge-multiple: true
 
-            - name: Download GUI artifacts
-              uses: actions/download-artifact@v8
-              with:
-                  name: gui-${{ matrix.name }}
-                  path: gui-art
-                  merge-multiple: true
-
             - name: Assemble dist
               run: |
                   mkdir -p dist
@@ -280,18 +180,6 @@ jobs:
                   # Windows extras
                   if [ "${{ matrix.platform }}" = "windows" ]; then
                       cp cli/wintun.dll dist/ 2>/dev/null || true
-                  fi
-
-                  # GUI binary / bundle
-                  if compgen -G "gui-art/*.app" > /dev/null 2>&1; then
-                      cp -r gui-art/*.app dist/
-                      # Embed client/proxy into .app bundle so GUI can find them
-                      cp cli/client dist/*.app/Contents/MacOS/
-                      cp cli/proxy dist/*.app/Contents/MacOS/
-                  elif compgen -G "gui-art/*.AppImage" > /dev/null 2>&1; then
-                      cp gui-art/*.AppImage dist/
-                  else
-                      cp gui-art/OmniProxy${{ matrix.ext }} dist/
                   fi
 
                   # Config
@@ -308,7 +196,6 @@ jobs:
                   # Set executable permissions (Unix)
                   if [ "${{ matrix.platform }}" != "windows" ]; then
                       chmod +x dist/client dist/server dist/proxy
-                      if [ -f dist/OmniProxy ]; then chmod +x dist/OmniProxy; fi
                   fi
                   cp README.md dist/ 2>/dev/null || true
 

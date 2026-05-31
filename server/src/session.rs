@@ -8,6 +8,7 @@ use protocol::{
 };
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
@@ -74,10 +75,19 @@ pub(crate) async fn handle_socket(socket: WebSocket) {
 
                     TYPE_TCP_DATA => {
                         let tx = stream_map.get(&stream_id).map(|r| r.clone());
-                        if let Some(tx) = tx
-                            && tx.send(payload).await.is_err()
-                        {
-                            warn!(stream_id, "tcp data: stream receiver dropped");
+                        if let Some(tx) = tx {
+                            match tokio::time::timeout(Duration::from_secs(5), tx.send(payload))
+                                .await
+                            {
+                                Ok(Ok(())) => {}
+                                Ok(Err(_)) => {
+                                    warn!(stream_id, "tcp data: stream receiver dropped");
+                                }
+                                Err(_) => {
+                                    warn!(stream_id, "tcp data: backpressure timeout, dropping");
+                                    stream_map.remove(&stream_id);
+                                }
+                            }
                         }
                     }
 
@@ -87,9 +97,9 @@ pub(crate) async fn handle_socket(socket: WebSocket) {
 
                     TYPE_UDP_DATA => match decode_udp_payload(&payload) {
                         Ok((host, port, data)) => {
-                            let sock = match udp_sockets.get(&stream_id) {
-                                Some(s) => s.clone(),
-                                None => {
+                            let sock = match udp_sockets.entry(stream_id) {
+                                dashmap::mapref::entry::Entry::Occupied(e) => e.get().clone(),
+                                dashmap::mapref::entry::Entry::Vacant(e) => {
                                     let s = match udp::bind_socket().await {
                                         Some(s) => s,
                                         None => {
@@ -97,20 +107,9 @@ pub(crate) async fn handle_socket(socket: WebSocket) {
                                             continue;
                                         }
                                     };
-                                    match udp_sockets.entry(stream_id) {
-                                        dashmap::mapref::entry::Entry::Vacant(e) => {
-                                            udp::spawn_recv_task(
-                                                s.clone(),
-                                                frame_tx.clone(),
-                                                stream_id,
-                                            );
-                                            e.insert(s.clone());
-                                            s
-                                        }
-                                        dashmap::mapref::entry::Entry::Occupied(e) => {
-                                            e.get().clone()
-                                        }
-                                    }
+                                    udp::spawn_recv_task(s.clone(), frame_tx.clone(), stream_id);
+                                    e.insert(s.clone());
+                                    s
                                 }
                             };
                             let addr = match udp_targets.get(&stream_id) {
