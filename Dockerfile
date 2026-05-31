@@ -1,4 +1,4 @@
-FROM alpine:3.22
+FROM busybox:musl
 
 COPY target/x86_64-unknown-linux-musl/release/server /usr/local/bin/server
 

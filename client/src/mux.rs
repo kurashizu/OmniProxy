@@ -478,7 +478,8 @@ impl Mux {
                             if let Some(tx) = tx
                                 && tx.send(payload).await.is_err()
                             {
-                                warn!(id, "tcp data: stream receiver dropped");
+                                warn!(id, "tcp data: stream receiver dropped, sending FIN");
+                                self.tcp_fin(id).await;
                             }
                         }
                         TYPE_TCP_FIN => {
@@ -495,7 +496,9 @@ impl Mux {
                                 && let Ok((host, port, data)) = decode_udp_payload(&payload)
                                 && tx.send((host, port, data)).await.is_err()
                             {
-                                warn!(id, "udp data: session receiver dropped");
+                                warn!(id, "udp data: session receiver dropped, cleaning up");
+                                let mut inner = self.inner.write().await;
+                                inner.udp_txs.remove(&id);
                             }
                         }
                         TYPE_ICMP_DATA => {
@@ -507,7 +510,9 @@ impl Mux {
                                 && let Ok((ip, data)) = decode_icmp_payload(&payload)
                                 && tx.send((ip, data)).await.is_err()
                             {
-                                warn!(id, "icmp data: session receiver dropped");
+                                warn!(id, "icmp data: session receiver dropped, cleaning up");
+                                let mut inner = self.inner.write().await;
+                                inner.icmp_txs.remove(&id);
                             }
                         }
                         _ => warn!(typ = format!("{typ:#x}"), id, "unknown frame type"),
