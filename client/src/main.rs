@@ -12,8 +12,27 @@ mod ws;
 
 use crate::{config::Config, mux::Mux, socks5::handle};
 
+#[cfg(windows)]
+fn disable_quick_edit_mode() {
+    use windows::Win32::System::Console::{
+        ENABLE_QUICK_EDIT_MODE, GetConsoleMode, GetStdHandle, SetConsoleMode,
+        STD_INPUT_HANDLE,
+    };
+    unsafe {
+        if let Ok(handle) = GetStdHandle(STD_INPUT_HANDLE) {
+            let mut mode = Default::default();
+            if GetConsoleMode(handle, &mut mode).is_ok() {
+                let _ = SetConsoleMode(handle, mode & !ENABLE_QUICK_EDIT_MODE);
+            }
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
+    #[cfg(windows)]
+    disable_quick_edit_mode();
+
     bootstrap::init();
 
     let cfg = Config::load()?;
