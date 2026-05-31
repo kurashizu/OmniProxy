@@ -78,15 +78,20 @@ fn detect_auto() -> Result<IpAddr> {
 fn detect_auto() -> Result<IpAddr> {
     fn get_iface_ipv4(iface: &str) -> Result<IpAddr> {
         let script = format!(
-            "(Get-NetIPAddress -InterfaceAlias '{}' -AddressFamily IPv4 -ErrorAction SilentlyContinue | Select-Object -First 1).IPAddress",
-            iface
+            "Get-NetIPAddress -InterfaceAlias '{}' -AddressFamily IPv4 -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty IPAddress",
+            iface.replace('\'', "''")
         );
         let out = std::process::Command::new("powershell")
             .args(["-NoProfile", "-Command", &script])
             .output()
             .context("powershell get IP")?;
         let ip_str = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        ip_str.parse::<IpAddr>().context("parse IP")
+        if ip_str.is_empty() {
+            anyhow::bail!("no IPv4 address found for interface '{iface}'");
+        }
+        ip_str.parse::<IpAddr>().with_context(|| {
+            format!("parse IP: got '{}'", ip_str.escape_debug())
+        })
     }
 
     let script = r#"Get-NetRoute -DestinationPrefix '0.0.0.0/0' | Where-Object {
