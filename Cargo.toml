@@ -12,3 +12,6 @@ strip        = true
 lto          = true
 codegen-units = 1
 panic        = "abort"
+
+[patch.crates-io]
+smoltcp = { git = "https://github.com/smoltcp-rs/smoltcp", branch = "tcp-more-fixes" }

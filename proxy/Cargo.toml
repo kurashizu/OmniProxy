@@ -18,7 +18,7 @@ serde        = { version = "1", features = ["derive"] }
 serde_yaml   = "0.9"
 url          = "2"
 tun-rs       = { version = "2", features = ["async", "async_framed"] }
-netstack-smoltcp = "0.2"
+netstack-smoltcp = { git = "https://github.com/cavivie/netstack-smoltcp" }
 futures      = "0.3"
 bytes        = "1"
 axum         = "0.8"
