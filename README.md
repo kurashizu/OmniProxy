@@ -96,7 +96,7 @@ socks_port: 1080
 
 # TUN interface settings
 tun_name: "tun0"          # Linux: tun0 | macOS: utun100 | Windows: tun0
-tun_ip: "198.18.0.1"      # TUN virtual IP
+tun_ip: "198.18.0.1"      # TUN interface IP
 tun_prefix: 16            # CIDR prefix (198.18.0.0/16)
 
 # IPv6 TUN settings
@@ -138,7 +138,7 @@ ICMP payload: `[2B ip_len][ip string][icmp_data]`
 
 ## TUN Mode
 
-Route all system traffic through the proxy. The proxy binary sets up TUN, configures routes, and launches client with a built-in TUN forwarder.
+Route all system traffic through the proxy. The proxy binary sets up TUN, configures routes, and launches the client with a built-in TUN forwarder. DNS is resolved server-side — the client sends the original hostname via SOCKS5 CONNECT, not a resolved IP.
 
 ### Linux/macOS
 
@@ -156,12 +156,12 @@ Run with administrator privileges:
 
 ### How it works
 
-1. Proxy creates a TUN interface with fake-IP ranges `198.18.0.0/16` (IPv4) and `fd00::/64` (IPv6)
-2. Routes traffic destined to fake-IPs through the TUN interface
-3. Built-in forwarder reads from TUN and sends to the local SOCKS5 client
+1. Proxy creates a TUN interface with IP `198.18.0.1/16` (IPv4) and `fd00::1/64` (IPv6)
+2. Routes all system traffic through the TUN interface via split default routes (`0.0.0.0/1` + `128.0.0.0/1`)
+3. Built-in forwarder reads packets from TUN, extracts the original destination, and sends to the local SOCKS5 client using hostname-based CONNECT (DNS is resolved server-side)
 4. Client multiplexes traffic over WebSocket to the server
 
-**Important:** The fake-IP ranges `198.18.0.0/16` and `fd00::/64` must not overlap with your real network.
+**Important:** The TUN IP ranges `198.18.0.0/16` and `fd00::/64` must not conflict with your local network.
 
 ## Requirements
 
