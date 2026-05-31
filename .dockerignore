@@ -1,0 +1,8 @@
+target/
+.git/
+.github/
+.opencode/
+*.md
+client/
+proxy/
+scripts/
