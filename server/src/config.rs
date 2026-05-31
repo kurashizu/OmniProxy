@@ -61,18 +61,7 @@ impl Config {
             Config::default()
         };
 
-        // env overrides file
-        if let Ok(addr) = std::env::var("SERVER_ADDR") {
-            cfg.addr = addr;
-        }
-        if let Some(port_str) = std::env::var("SERVER_PORT").ok() {
-            cfg.port = port_str.parse().context("invalid SERVER_PORT")?;
-        }
-        if let Ok(token) = std::env::var("SERVER_TOKEN") {
-            cfg.token = token;
-        }
-
-        // CLI overrides env
+        // CLI overrides file
         if let Some(addr) = cli.addr {
             cfg.addr = addr;
         }
@@ -80,6 +69,21 @@ impl Config {
             cfg.port = port;
         }
         if let Some(token) = cli.token {
+            cfg.token = token;
+        }
+
+        // env overrides everything
+        if let Ok(addr) = std::env::var("SERVER_ADDR") {
+            tracing::info!("using SERVER_ADDR={}", addr);
+            cfg.addr = addr;
+        }
+        if let Ok(port_str) = std::env::var("SERVER_PORT") {
+            let port: u16 = port_str.parse().context("invalid SERVER_PORT")?;
+            tracing::info!("using SERVER_PORT={}", port);
+            cfg.port = port;
+        }
+        if let Ok(token) = std::env::var("SERVER_TOKEN") {
+            tracing::info!("using SERVER_TOKEN ({} chars)", token.len());
             cfg.token = token;
         }
 

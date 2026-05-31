@@ -1,12 +1,14 @@
 use axum::{
-    extract::{State, ws::WebSocketUpgrade},
-    http::{HeaderMap, StatusCode},
-    response::IntoResponse,
+    extract::{FromRequestParts, State, ws::WebSocketUpgrade},
+    http::{HeaderMap, StatusCode, header, Request},
+    response::{Html, IntoResponse, Response},
 };
 use tracing::{info, warn};
 
 use crate::config::AppState;
 use crate::session::handle_socket;
+
+const INDEX_HTML: &str = include_str!("web.html");
 
 fn constant_time_eq(a: &str, b: &str) -> bool {
     if a.len() != b.len() {
@@ -20,10 +22,20 @@ fn constant_time_eq(a: &str, b: &str) -> bool {
 }
 
 pub(crate) async fn handler(
-    ws: WebSocketUpgrade,
     State(state): State<AppState>,
     headers: HeaderMap,
-) -> impl IntoResponse {
+    request: Request<axum::body::Body>,
+) -> Response {
+    let is_ws = headers
+        .get(header::UPGRADE)
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.eq_ignore_ascii_case("websocket"))
+        .unwrap_or(false);
+
+    if !is_ws {
+        return Html(INDEX_HTML).into_response();
+    }
+
     let peer_ip = headers
         .get("x-forwarded-for")
         .and_then(|v| v.to_str().ok())
@@ -87,5 +99,9 @@ pub(crate) async fn handler(
         );
     }
 
-    ws.on_upgrade(handle_socket)
+    let (mut parts, _body) = request.into_parts();
+    match WebSocketUpgrade::from_request_parts(&mut parts, &state).await {
+        Ok(ws) => ws.on_upgrade(handle_socket),
+        Err(rejection) => rejection.into_response(),
+    }
 }
