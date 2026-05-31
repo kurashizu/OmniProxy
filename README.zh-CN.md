@@ -233,4 +233,4 @@ ICMP 负载：`[2B IP字符串长度][IP字符串][ICMP 数据]`
 
 ## 许可协议
 
-MIT
+WTFPL

@@ -233,4 +233,4 @@ ICMP payload: `[2B ip_len][ip string][icmp_data]`
 
 ## License
 
-MIT
+WTFPL
