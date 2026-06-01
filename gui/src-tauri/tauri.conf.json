@@ -38,7 +38,6 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "category": "Network",
     "shortDescription": "OmniProxy Desktop Client",
     "longDescription": "Tauri 2 GUI for OmniProxy: SOCKS5 + WebSocket tunnel.",
     "windows": {
