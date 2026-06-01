@@ -89,7 +89,11 @@ jobs:
                   # Tauri CLI reads this for log verbosity; useful in CI.
                   TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
                   TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-              run: pnpm tauri build --target x86_64-pc-windows-msvc
+                  # Force Tauri to download the WiX toolchain verbosely
+                  # and surface light.exe / candle.exe stderr so we can
+                  # diagnose bundler failures in CI.
+                  RUST_LOG: debug
+              run: pnpm tauri build --target x86_64-pc-windows-msvc --verbose 2>&1 | tee tauri-build.log
 
             # ── Copy proxy / client into the bundle so they ship
             #    next to omniproxy-gui.exe ──────────────────────────
