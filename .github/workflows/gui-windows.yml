@@ -9,9 +9,12 @@ name: GUI (Windows)
 #   - workflow_dispatch    → build only (manual smoke test)
 
 on:
+    # Only build the GUI on the `tesing` branch while it is in development.
+    # Once promoted to master + tagged, the CLI `release.yml` workflow can
+    # take over and bundle the GUI artifacts.
     push:
-        tags:
-            - "v*"
+        branches:
+            - tesing
     workflow_dispatch:
 
 permissions:
