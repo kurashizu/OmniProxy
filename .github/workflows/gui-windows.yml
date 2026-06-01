@@ -53,6 +53,7 @@ jobs:
               with:
                   node-version: "20"
                   cache: "pnpm"
+                  cache-dependency-path: gui/pnpm-lock.yaml
 
             # ── Build CLI binaries (the GUI spawns these) ───────────
             # We build them with the same target Tauri uses so file
