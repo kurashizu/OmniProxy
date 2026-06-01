@@ -145,7 +145,7 @@ jobs:
                   $client = Get-ChildItem -Path $dir -Recurse | Where-Object { $_.Name -eq "client.exe" } | Select-Object -First 1
                   if (-not $proxy)  { throw "proxy.exe NOT FOUND inside MSI" }
                   if (-not $client) { throw "client.exe NOT FOUND inside MSI" }
-                  Write-Host "MSI contains proxy.exe ($($proxy.Length) B) and client.exe ($($client.Length) B) — OK"
+                  Write-Host "MSI contains proxy.exe ($($proxy.Length) B) and client.exe ($($client.Length) B) - OK"
 
             # ── Upload installers + raw exe as artifacts ────────────
             - name: Upload GUI artifacts
