@@ -116,14 +116,36 @@ jobs:
                   ls -la "$BUNDLE/msi/" || true
                   echo "NSIS installers:"
                   ls -la "$BUNDLE/nsis/" || true
-                  echo "Resources (proxy / client should be here):"
-                  ls -la "$BUNDLE/resources/" || true
+                  echo "Staged CLI binaries (these get embedded into installers):"
+                  ls -la gui/src-tauri/resources/ || true
                   test -n "$(ls -A "$BUNDLE/msi/" 2>/dev/null)" || (echo "no MSI" && exit 1)
                   test -n "$(ls -A "$BUNDLE/nsis/" 2>/dev/null)" || (echo "no NSIS" && exit 1)
-                  # Verify the CLI binaries made it into the bundle —
-                  # without them the GUI installs but cannot launch proxy.
-                  test -f "$BUNDLE/resources/proxy.exe"  || (echo "proxy.exe missing from bundle"  && exit 1)
-                  test -f "$BUNDLE/resources/client.exe" || (echo "client.exe missing from bundle" && exit 1)
+                  test -f gui/src-tauri/resources/proxy.exe  || (echo "staged proxy.exe missing"  && exit 1)
+                  test -f gui/src-tauri/resources/client.exe || (echo "staged client.exe missing" && exit 1)
+
+            # ── Extract MSI to confirm CLI binaries are embedded ───
+            # Tauri 2 does NOT emit a sibling bundle/resources/ directory.
+            # The CLI binaries listed in bundle.resources are packed
+            # *inside* the MSI payload itself. Use msiexec /a to do an
+            # admin install (which extracts without running scripts) and
+            # verify proxy.exe / client.exe land in the install tree.
+            - name: Verify MSI embeds proxy.exe and client.exe
+              shell: powershell
+              run: |
+                  $msi = Get-ChildItem -Path "gui\src-tauri\target\x86_64-pc-windows-msvc\release\bundle\msi" -Filter "*.msi" | Select-Object -First 1
+                  if (-not $msi) { throw "no MSI found" }
+                  Write-Host "Extracting $($msi.FullName) ..."
+                  $dir = "D:\msi-extract"
+                  if (Test-Path $dir) { Remove-Item -Recurse -Force $dir }
+                  New-Item -ItemType Directory -Path $dir | Out-Null
+                  $proc = Start-Process -FilePath "msiexec.exe" -ArgumentList "/a `"$($msi.FullName)`" /qn TARGETDIR=`"$dir`"" -Wait -PassThru
+                  if ($proc.ExitCode -ne 0) { throw "msiexec /a failed with exit code $($proc.ExitCode)" }
+                  Get-ChildItem -Path $dir -Recurse | Where-Object { $_.Name -match "^(proxy|client)\.exe$" } | Format-Table FullName, Length
+                  $proxy  = Get-ChildItem -Path $dir -Recurse | Where-Object { $_.Name -eq "proxy.exe" }  | Select-Object -First 1
+                  $client = Get-ChildItem -Path $dir -Recurse | Where-Object { $_.Name -eq "client.exe" } | Select-Object -First 1
+                  if (-not $proxy)  { throw "proxy.exe NOT FOUND inside MSI" }
+                  if (-not $client) { throw "client.exe NOT FOUND inside MSI" }
+                  Write-Host "MSI contains proxy.exe ($($proxy.Length) B) and client.exe ($($client.Length) B) — OK"
 
             # ── Upload installers + raw exe as artifacts ────────────
             - name: Upload GUI artifacts
