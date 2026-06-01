@@ -6,6 +6,8 @@
 #   copy-binaries.sh                       # auto-detect target dir
 #   copy-binaries.sh x86_64-pc-windows-msvc
 #   copy-binaries.sh x86_64-pc-windows-gnu
+#   copy-binaries.sh --target x86_64-pc-windows-msvc
+#   copy-binaries.sh --target=x86_64-pc-windows-msvc
 #
 # Source location (where `cargo build -p <crate> --release --target <triple>`
 # drops binaries):
@@ -23,19 +25,25 @@ set -euo pipefail
 
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 
-# Parse optional --target argument.
+# Parse optional --target argument. Use an index-based loop because
+# `shift` inside a `for arg in "$@"` body does NOT advance the loop
+# iterator — it silently leaves the next arg unconsumed, and the bare
+# `*)` fallback then misreads the consumed flag as a triple.
 TARGET_TRIPLE=""
-for arg in "$@"; do
+i=1
+while [ "${i}" -le "$#" ]; do
+  eval "arg=\${${i}}"
   case "${arg}" in
     --target=*) TARGET_TRIPLE="${arg#--target=}" ;;
     --target)
-      shift
-      TARGET_TRIPLE="${1:-}"
+      i=$((i + 1))
+      eval "TARGET_TRIPLE=\${${i}:-}"
       ;;
     --help|-h)
       sed -n '2,18p' "$0"
       exit 0
       ;;
+    --) ;;  # pnpm's arg separator — ignore
     *)
       # bare triple (e.g. "x86_64-pc-windows-msvc")
       if [[ -z "${TARGET_TRIPLE}" && "${arg}" == *-* ]]; then
@@ -43,6 +51,7 @@ for arg in "$@"; do
       fi
       ;;
   esac
+  i=$((i + 1))
 done
 
 SRC_DIR_DEFAULT="${REPO_ROOT}/target/release"
