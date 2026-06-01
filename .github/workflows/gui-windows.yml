@@ -81,6 +81,21 @@ jobs:
               shell: bash
               run: pnpm install --frozen-lockfile
 
+            # ── Stage proxy / client into Tauri resources ──────────
+            # Tauri's bundle.resources only picks up files that exist
+            # at tauri build time, so we have to copy the CLI binaries
+            # into gui/src-tauri/resources/ BEFORE the build runs.
+            # Tauri then packages them into bundle/resources/ and
+            # embeds them in the MSI/NSIS installers automatically.
+            - name: Stage proxy / client into gui/src-tauri/resources/
+              working-directory: gui
+              shell: bash
+              run: |
+                  mkdir -p src-tauri/resources
+                  cp -f ../target/x86_64-pc-windows-msvc/release/proxy.exe  src-tauri/resources/proxy.exe
+                  cp -f ../target/x86_64-pc-windows-msvc/release/client.exe src-tauri/resources/client.exe
+                  ls -la src-tauri/resources/
+
             # ── Tauri build (this is the long step) ─────────────────
             - name: Tauri build (MSI + NSIS)
               working-directory: gui
@@ -90,13 +105,6 @@ jobs:
                   TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
                   TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
               run: pnpm tauri build --target x86_64-pc-windows-msvc
-
-            # ── Copy proxy / client into the bundle so they ship
-            #    next to omniproxy-gui.exe ──────────────────────────
-            - name: Copy proxy / client into GUI bundle
-              working-directory: gui
-              shell: bash
-              run: pnpm copy:binaries -- --target x86_64-pc-windows-msvc
 
             # ── Smoke test the produced binary ──────────────────────
             - name: Verify installers were produced
@@ -112,6 +120,10 @@ jobs:
                   ls -la "$BUNDLE/resources/" || true
                   test -n "$(ls -A "$BUNDLE/msi/" 2>/dev/null)" || (echo "no MSI" && exit 1)
                   test -n "$(ls -A "$BUNDLE/nsis/" 2>/dev/null)" || (echo "no NSIS" && exit 1)
+                  # Verify the CLI binaries made it into the bundle —
+                  # without them the GUI installs but cannot launch proxy.
+                  test -f "$BUNDLE/resources/proxy.exe"  || (echo "proxy.exe missing from bundle"  && exit 1)
+                  test -f "$BUNDLE/resources/client.exe" || (echo "client.exe missing from bundle" && exit 1)
 
             # ── Upload installers + raw exe as artifacts ────────────
             - name: Upload GUI artifacts
