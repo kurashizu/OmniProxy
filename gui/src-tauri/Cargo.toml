@@ -2,7 +2,7 @@
 
 [package]
 name = "omniproxy-gui"
-version = "1.0.6-rc.2"
+version = "1.0.6"
 edition = "2024"
 description = "OmniProxy Desktop GUI"
 default-run = "omniproxy-gui"
