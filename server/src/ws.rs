@@ -100,8 +100,9 @@ pub(crate) async fn handler(
     }
 
     let (mut parts, _body) = request.into_parts();
+    let state_for_socket = state.clone();
     match WebSocketUpgrade::from_request_parts(&mut parts, &state).await {
-        Ok(ws) => ws.on_upgrade(handle_socket),
+        Ok(ws) => ws.on_upgrade(move |socket| handle_socket(socket, state_for_socket)),
         Err(rejection) => rejection.into_response(),
     }
 }

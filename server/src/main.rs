@@ -8,10 +8,15 @@ mod ws;
 use anyhow::Result;
 use axum::Router;
 use axum::routing::get;
-use tracing::info;
+use std::sync::Arc;
+use tokio::sync::RwLock;
+use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
 use config::{AppState, Config};
+
+const IPIFY_V4: &str = "https://api.ipify.org?format=json";
+const IPIFY_V6: &str = "https://api64.ipify.org?format=json";
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -42,14 +47,58 @@ async fn main() -> Result<()> {
         tracing::warn!("no auth token — server is open to anyone");
     }
 
+    let outbound = Arc::new(RwLock::new(protocol::ServerInfoPayload::default()));
+    spawn_outbound_refresher(outbound.clone());
+
     let state = AppState {
-        cfg: std::sync::Arc::new(cfg),
+        cfg: Arc::new(cfg),
+        outbound,
     };
     let app = Router::new().route("/", get(ws::handler)).with_state(state);
     let listener = tokio::net::TcpListener::bind(&bind).await?;
     info!("ws server on {bind}");
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+fn spawn_outbound_refresher(outbound: Arc<RwLock<protocol::ServerInfoPayload>>) {
+    tokio::spawn(async move {
+        let mut backoff_secs: u64 = 30;
+        loop {
+            match fetch_outbound().await {
+                Ok(info) => {
+                    *outbound.write().await = info;
+                    backoff_secs = 30;
+                }
+                Err(e) => {
+                    warn!("outbound ip lookup failed: {e:#}");
+                    backoff_secs = (backoff_secs * 2).min(1800);
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(backoff_secs)).await;
+        }
+    });
+}
+
+async fn fetch_outbound() -> Result<protocol::ServerInfoPayload> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()?;
+    let mut info = protocol::ServerInfoPayload::default();
+    if let Ok(r) = client.get(IPIFY_V4).send().await
+        && let Ok(v) = r.json::<serde_json::Value>().await
+        && let Some(s) = v.get("ip").and_then(|x| x.as_str())
+    {
+        info.outbound_ipv4 = Some(s.to_string());
+    }
+    if let Ok(r) = client.get(IPIFY_V6).send().await
+        && let Ok(v) = r.json::<serde_json::Value>().await
+        && let Some(s) = v.get("ip").and_then(|x| x.as_str())
+        && s.contains(':')
+    {
+        info.outbound_ipv6 = Some(s.to_string());
+    }
+    Ok(info)
 }
 
 #[cfg(unix)]

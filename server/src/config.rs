@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use tokio::sync::RwLock;
 
 #[derive(Parser, Debug)]
 #[command(name = "server", version)]
@@ -99,4 +100,6 @@ impl Config {
 #[derive(Clone)]
 pub(crate) struct AppState {
     pub cfg: Arc<Config>,
+    /// Cached outbound IP info (refreshed every 5 minutes).
+    pub outbound: Arc<RwLock<protocol::ServerInfoPayload>>,
 }

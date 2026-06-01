@@ -1,7 +1,7 @@
 use axum::{Json, Router, routing::get};
 use std::sync::Arc;
 
-use crate::mux::Mux;
+use crate::mux::{Mux, ServerInfo};
 
 pub(crate) async fn serve(mux: Arc<Mux>, port: u16) {
     let app = Router::new()
@@ -39,6 +39,19 @@ async fn stats_handler(
     let inner = mux.inner().read().await;
     let uptime = s.started_at.elapsed().as_secs_f64();
 
+    let latency_ms = s.latency_ms.load(Ordering::Relaxed);
+    let (jitter, _loss) = mux.latency_summary();
+    let server_info: ServerInfo = mux.server_info().read().await.clone();
+    drop(inner);
+
+    let latency_json = if latency_ms == u32::MAX {
+        serde_json::json!(null)
+    } else {
+        serde_json::json!(latency_ms)
+    };
+
+    let inner = mux.inner().read().await;
+
     Json(serde_json::json!({
         "connected": s.ws_connected.load(Ordering::Relaxed),
         "uptime_secs": uptime,
@@ -54,6 +67,16 @@ async fn stats_handler(
         },
         "socks5": format!("{}:{}", mux.config().addr, mux.config().port),
         "server": mux.config().server,
+        "latency_ms": latency_json,
+        "latency_jitter_ms": jitter,
+        "server_info": {
+            "server_host": server_info.server_host,
+            "server_ip": server_info.server_ip,
+            "client_outbound_ipv4": server_info.client_outbound_ipv4,
+            "client_outbound_ipv6": server_info.client_outbound_ipv6,
+            "server_outbound_ipv4": server_info.server_outbound_ipv4,
+            "server_outbound_ipv6": server_info.server_outbound_ipv6,
+        },
         "connections": inner.connections_snapshot().into_iter().map(|c| {
             let elapsed = c.started_at.elapsed().as_secs_f64();
             serde_json::json!({

@@ -46,6 +46,7 @@ async fn main() -> Result<()> {
     let mux = Mux::connect_mux(&cfg).await?;
 
     start_admin(mux.clone(), &cfg);
+    crate::mux::spawn_latency_pinger(mux.clone());
 
     info!("connected to {}", cfg.server);
     run_client(cfg, mux, listener).await

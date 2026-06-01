@@ -6,6 +6,7 @@
 - `client` is a single binary; `src/main.rs` + `src/bootstrap.rs`.
 - `proxy` is a single binary; `src/main.rs` + `src/stack.rs` + `src/forwarder/`.
 - `server` is a single binary; `src/main.rs` + `src/session.rs` (WebSocket multiplexer).
+- `gui/` — Tauri 2 + Next.js 15 desktop application (see GUI section below).
 
 ## Build & Test Commands
 - **Build all (release)**: `cargo build --release`
@@ -62,6 +63,34 @@
 
 ### Client Reconnect
 - On WebSocket disconnect, client uses **exponential backoff** (1s → 2s → ... → 30s cap) with **infinite retries**.
+
+### Client Latency Measurement
+- `client/src/mux.rs::spawn_latency_pinger` sends `TYPE_PING` (0x08) frames every 1s; server echoes back as `TYPE_PONG` (0x09).
+- RTT recorded in `Stats::latency_ms` (u32::MAX means timeout).
+- `/stats` exposes `latency_ms` and `latency_jitter_ms`.
+
+### Client Server Info
+- `client/src/mux.rs::refresh_outbound_ips` queries `api.ipify.org` (v4) and `api64.ipify.org` (v6) every 5 min.
+- `Mux::server_info` field caches the result; `extract_host` resolves `cfg.server` → IP at startup.
+- Server-side outbound IPs come from `TYPE_SERVER_INFO` (0x07) frame sent at WS handshake (see `server/src/session.rs`).
+
+## GUI (`gui/`)
+- Tauri 2 + Next.js 15 desktop application.
+- `gui/src-tauri/Cargo.toml` is **not** part of the root workspace (its own `[workspace]` empty annotation).
+- Frontend builds static (`next build` → `gui/out/`); Tauri embeds via `tauri.conf.json:build.frontendDist = "../out"`.
+- **Dev**: `cd gui && pnpm install && pnpm tauri dev` (requires `proxy.exe` + `client.exe` in `target/release/`).
+- **Build**: `cd gui && pnpm tauri build` → MSI/NSIS in `gui/src-tauri/target/release/bundle/`.
+- **UAC**: `gui/src-tauri/build.rs` injects `requireAdministrator` manifest into the Windows binary.
+- **Layout** (仿 Clash Verge Rev):
+  - Sidebar 72px wide, 5 icon nav (Home/Connections/Routes/Logs/Settings) + bottom Start/Stop button.
+  - Each page balanced 2-3 cards; no duplicate info across pages.
+  - Home: NodeCard / ConnectionStatusCard / TrafficCard.
+  - Connections: 3 cards (summary / search+filter / live table).
+  - Routes: TunInfoCard / RoutesTableCard.
+  - Logs: LogFilterCard (no DEBUG level) / LogViewerCard (5000-line ring buffer).
+  - Settings: NodeFormCard / AboutCard (author kurashizu, GitHub, version).
+- **App starts `stopped`**: never auto-spawns proxy. User must click the sidebar Start/Stop button.
+- **Configuration**: GUI stores its own `config.yaml` next to the GUI exe; passes node settings to `proxy` as CLI args.
 
 ## Code Style
 - Standard rustfmt defaults (no custom `rustfmt.toml`).

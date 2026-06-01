@@ -1,24 +1,32 @@
 use anyhow::{Context, Result};
 use futures_util::{SinkExt, StreamExt};
 use std::collections::HashMap;
+use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
-use tokio::sync::{RwLock, mpsc, oneshot};
+use tokio::sync::{Mutex, RwLock, mpsc, oneshot};
 use tokio_tungstenite::tungstenite::Message;
 use tracing::{debug, info, warn};
 
 use crate::config::Config;
 use crate::ws::build_ws;
 use protocol::{
-    TYPE_ICMP_DATA, TYPE_TCP_CONNECT, TYPE_TCP_CONNECTED, TYPE_TCP_DATA, TYPE_TCP_FIN,
-    TYPE_UDP_DATA, decode_frame, decode_icmp_payload, decode_udp_payload, encode_frame,
-    encode_frame_bytes, encode_udp_payload,
+    TYPE_ICMP_DATA, TYPE_PING, TYPE_PONG, TYPE_SERVER_INFO, TYPE_TCP_CONNECT, TYPE_TCP_CONNECTED,
+    TYPE_TCP_DATA, TYPE_TCP_FIN, TYPE_UDP_DATA, decode_frame, decode_icmp_payload,
+    decode_server_info, decode_udp_payload, encode_frame, encode_frame_bytes, encode_udp_payload,
 };
 
 const RATE_CHECK_INTERVAL: u64 = 16; // check every N frames
 const RATE_HI_THRESHOLD: u64 = 100 * 1024; // 100 KB/s
 const RATE_LO_THRESHOLD: u64 = 10 * 1024; // 10 KB/s
+
+const IPIFY_V4: &str = "https://api.ipify.org?format=json";
+const IPIFY_V6: &str = "https://api64.ipify.org?format=json";
+const IP_REFRESH_SECS: u64 = 300;
+const LATENCY_PING_INTERVAL: Duration = Duration::from_secs(1);
+const LATENCY_TIMEOUT: Duration = Duration::from_secs(2);
+const LATENCY_LOSS_WINDOW: usize = 100;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum StreamPriority {
@@ -123,6 +131,8 @@ pub(crate) struct Stats {
     pub reconnect_count: AtomicU64,
     pub bytes_tx: AtomicU64,
     pub bytes_rx: AtomicU64,
+    /// Latest RTT in milliseconds; u32::MAX indicates a recent timeout.
+    pub latency_ms: AtomicU32,
 }
 
 impl Stats {
@@ -133,8 +143,25 @@ impl Stats {
             reconnect_count: AtomicU64::new(0),
             bytes_tx: AtomicU64::new(0),
             bytes_rx: AtomicU64::new(0),
+            latency_ms: AtomicU32::new(0),
         })
     }
+}
+
+/// Snapshot of IP / network info exposed via admin /stats.
+#[derive(Debug, Clone, Default)]
+#[allow(dead_code)]
+pub(crate) struct ServerInfo {
+    pub server_host: String,
+    pub server_ip: Option<String>,
+    pub client_outbound_ipv4: Option<String>,
+    pub client_outbound_ipv6: Option<String>,
+    pub server_outbound_ipv4: Option<String>,
+    pub server_outbound_ipv6: Option<String>,
+    /// Pre-computed jitter (ms) over the recent latency window.
+    pub latency_jitter_ms: u32,
+    /// Pre-computed packet-loss % over the recent window (0.0 - 100.0, *100 stored).
+    pub latency_loss_pct_x100: u32,
 }
 
 pub(crate) struct MuxInner {
@@ -201,15 +228,30 @@ pub(crate) struct Mux {
     /// Current config (includes server URL and outbound_ip)
     cfg: Config,
     stats: Arc<Stats>,
+    /// Cached server_info shared with admin endpoints.
+    server_info: Arc<RwLock<ServerInfo>>,
+    /// Latency sample history (ms) for jitter / loss calculation.
+    latency_samples: Arc<Mutex<VecDeque<u32>>>,
+    /// Pending latency pings waiting for Pong response.
+    pending_pings: Arc<Mutex<HashMap<u32, oneshot::Sender<()>>>>,
+    next_ping_id: AtomicU32,
 }
 
 impl Mux {
     pub(crate) fn new(cfg: Config) -> Self {
+        let server_host = cfg.server.clone();
         Mux {
             next_id: AtomicU32::new(1),
             inner: RwLock::new(MuxInner::new()),
             cfg,
             stats: Stats::new(),
+            server_info: Arc::new(RwLock::new(ServerInfo {
+                server_host,
+                ..Default::default()
+            })),
+            latency_samples: Arc::new(Mutex::new(VecDeque::with_capacity(LATENCY_LOSS_WINDOW))),
+            pending_pings: Arc::new(Mutex::new(HashMap::new())),
+            next_ping_id: AtomicU32::new(1),
         }
     }
 
@@ -225,8 +267,68 @@ impl Mux {
         &self.cfg
     }
 
+    pub(crate) fn server_info(&self) -> Arc<RwLock<ServerInfo>> {
+        self.server_info.clone()
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn pending_pings(&self) -> Arc<Mutex<HashMap<u32, oneshot::Sender<()>>>> {
+        self.pending_pings.clone()
+    }
+
+    pub(crate) fn next_ping_id(&self) -> u32 {
+        self.next_ping_id.fetch_add(1, Ordering::Relaxed)
+    }
+
+    pub(crate) fn record_latency(&self, ms: u32) {
+        self.stats.latency_ms.store(ms, Ordering::Relaxed);
+        if ms == u32::MAX {
+            return;
+        }
+        let mut samples = self.latency_samples.try_lock().ok();
+        if let Some(s) = samples.as_mut() {
+            if s.len() >= LATENCY_LOSS_WINDOW {
+                s.pop_front();
+            }
+            s.push_back(ms);
+        }
+    }
+
+    pub(crate) fn latency_summary(&self) -> (u32, u32) {
+        let samples = self.latency_samples.try_lock().ok();
+        match samples {
+            Some(s) if s.len() >= 2 => {
+                let mean = s.iter().map(|x| *x as f64).sum::<f64>() / s.len() as f64;
+                let variance = s
+                    .iter()
+                    .map(|x| {
+                        let d = *x as f64 - mean;
+                        d * d
+                    })
+                    .sum::<f64>()
+                    / s.len() as f64;
+                let jitter = variance.sqrt() as u32;
+                (jitter, 0u32)
+            }
+            _ => (0, 0),
+        }
+    }
+
     pub(crate) async fn connect_mux(cfg: &Config) -> Result<Arc<Self>> {
         let mux = Arc::new(Mux::new(cfg.clone()));
+
+        // Resolve server hostname → IP and start ipify refresh in background.
+        let host_for_dns = extract_host(&cfg.server);
+        let mux_for_dns = mux.clone();
+        tokio::spawn(async move {
+            if let Some(host) = host_for_dns
+                && let Ok(mut addrs) = tokio::net::lookup_host((host.as_str(), 0u16)).await
+                && let Some(addr) = addrs.next()
+            {
+                mux_for_dns.server_info.write().await.server_ip = Some(addr.ip().to_string());
+            }
+            refresh_outbound_ips(mux_for_dns.clone()).await;
+        });
 
         const MAX_RETRIES: u32 = 2;
         const RETRY_DELAY: Duration = Duration::from_secs(5);
@@ -332,6 +434,13 @@ impl Mux {
             }
             None => self.send_mi(frame).await,
         }
+    }
+
+    /// Send a TYPE_PING frame with the given id; payload is the id (4 bytes BE).
+    /// Routed through the high-priority channel since it's a control frame.
+    async fn send_ping(&self, id: u32) -> Result<()> {
+        let payload = id.to_be_bytes();
+        self.send_hi(encode_frame(id, TYPE_PING, &payload)).await
     }
 
     /// Establish WS connection. If outbound_ip bind fails (e.g. network change
@@ -515,6 +624,27 @@ impl Mux {
                                 inner.icmp_txs.remove(&id);
                             }
                         }
+                        TYPE_SERVER_INFO => match decode_server_info(&payload) {
+                            Ok(info) => {
+                                let mut si = self.server_info.write().await;
+                                if info.outbound_ipv4.is_some() {
+                                    si.server_outbound_ipv4 = info.outbound_ipv4;
+                                }
+                                if info.outbound_ipv6.is_some() {
+                                    si.server_outbound_ipv6 = info.outbound_ipv6;
+                                }
+                            }
+                            Err(e) => warn!("server_info decode: {e:#}"),
+                        },
+                        TYPE_PONG => {
+                            // Latency measurement: signal the pinger task.
+                            let id_bytes: [u8; 4] = payload[..4].try_into().unwrap_or([0; 4]);
+                            let id = u32::from_be_bytes(id_bytes);
+                            let mut pending = self.pending_pings.lock().await;
+                            if let Some(tx) = pending.remove(&id) {
+                                tx.send(()).ok();
+                            }
+                        }
                         _ => warn!(typ = format!("{typ:#x}"), id, "unknown frame type"),
                     }
                 }
@@ -532,6 +662,13 @@ impl Mux {
             }
         }
         self.stats.ws_connected.store(false, Ordering::Relaxed);
+        // Drain any pending pings so callers waiting on oneshot don't hang.
+        {
+            let mut pending = self.pending_pings.lock().await;
+            for (_, tx) in pending.drain() {
+                tx.send(()).ok();
+            }
+        }
         writer.abort();
         self.inner.write().await.clear();
     }
@@ -666,6 +803,96 @@ fn spawn_reconnect_loop(mux: Arc<Mux>, mut disc_rx: oneshot::Receiver<()>) {
                         tokio::time::sleep(delay).await;
                         delay = (delay * 2).min(max_delay);
                     }
+                }
+            }
+        }
+    });
+}
+
+/// Extract bare host from a server URL that may or may not carry a scheme.
+pub(crate) fn extract_host(server: &str) -> Option<String> {
+    let s = server.trim();
+    let s = s
+        .strip_prefix("wss://")
+        .or_else(|| s.strip_prefix("ws://"))
+        .unwrap_or(s);
+    let s = s.split('/').next().unwrap_or(s);
+    let s = s.split(':').next().unwrap_or(s);
+    if s.is_empty() {
+        None
+    } else {
+        Some(s.to_string())
+    }
+}
+
+async fn refresh_outbound_ips(mux: Arc<Mux>) {
+    let client = match reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            warn!("reqwest client build: {e:#}");
+            return;
+        }
+    };
+
+    let mut backoff: u64 = 30;
+    loop {
+        let mut info = mux.server_info.write().await;
+        if let Ok(r) = client.get(IPIFY_V4).send().await
+            && let Ok(v) = r.json::<serde_json::Value>().await
+            && let Some(s) = v.get("ip").and_then(|x| x.as_str())
+        {
+            info.client_outbound_ipv4 = Some(s.to_string());
+        }
+        if let Ok(r) = client.get(IPIFY_V6).send().await
+            && let Ok(v) = r.json::<serde_json::Value>().await
+            && let Some(s) = v.get("ip").and_then(|x| x.as_str())
+            && s.contains(':')
+        {
+            info.client_outbound_ipv6 = Some(s.to_string());
+        }
+        drop(info);
+        backoff = if mux.stats.ws_connected.load(Ordering::Relaxed) {
+            30
+        } else {
+            (backoff * 2).min(1800)
+        };
+        tokio::time::sleep(Duration::from_secs(IP_REFRESH_SECS.min(backoff))).await;
+    }
+}
+
+/// Background task that sends TYPE_PING frames every second and records RTT.
+pub(crate) fn spawn_latency_pinger(mux: Arc<Mux>) {
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(LATENCY_PING_INTERVAL).await;
+            if !mux.stats.ws_connected.load(Ordering::Relaxed) {
+                mux.stats.latency_ms.store(0, Ordering::Relaxed);
+                continue;
+            }
+            let id = mux.next_ping_id();
+            let (tx, rx) = oneshot::channel::<()>();
+            {
+                let mut pending = mux.pending_pings.lock().await;
+                pending.insert(id, tx);
+            }
+            let t0 = Instant::now();
+            if mux.send_ping(id).await.is_err() {
+                let mut pending = mux.pending_pings.lock().await;
+                pending.remove(&id);
+                continue;
+            }
+            match tokio::time::timeout(LATENCY_TIMEOUT, rx).await {
+                Ok(Ok(())) => {
+                    let rtt = t0.elapsed().as_millis() as u32;
+                    mux.record_latency(rtt);
+                }
+                _ => {
+                    let mut pending = mux.pending_pings.lock().await;
+                    pending.remove(&id);
+                    mux.record_latency(u32::MAX);
                 }
             }
         }

@@ -3,8 +3,9 @@ use bytes::Bytes;
 use dashmap::DashMap;
 use futures_util::{SinkExt, StreamExt};
 use protocol::{
-    TYPE_ICMP_DATA, TYPE_TCP_CONNECT, TYPE_TCP_CONNECTED, TYPE_TCP_DATA, TYPE_TCP_FIN,
-    TYPE_UDP_DATA, decode_frame, decode_udp_payload, encode_frame,
+    TYPE_ICMP_DATA, TYPE_PING, TYPE_PONG, TYPE_SERVER_INFO, TYPE_TCP_CONNECT, TYPE_TCP_CONNECTED,
+    TYPE_TCP_DATA, TYPE_TCP_FIN, TYPE_UDP_DATA, decode_frame, decode_udp_payload, encode_frame,
+    encode_server_info,
 };
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -12,17 +13,35 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
+use crate::config::AppState;
 use crate::icmp;
 use crate::tcp;
 use crate::udp;
 
-pub(crate) async fn handle_socket(socket: WebSocket) {
+pub(crate) async fn handle_socket(socket: WebSocket, state: AppState) {
     let (ws_tx, mut ws_rx) = socket.split();
 
     let (frame_tx, mut frame_rx) = mpsc::channel::<Bytes>(1024);
 
     let mut ws_tx = ws_tx;
+    let outbound = state.outbound.clone();
+    let server_info_payload = {
+        let info = outbound.read().await.clone();
+        match encode_server_info(&info) {
+            Ok(p) => p,
+            Err(e) => {
+                warn!("encode server_info: {e:#}");
+                Bytes::new()
+            }
+        }
+    };
     tokio::spawn(async move {
+        if !server_info_payload.is_empty() {
+            let frame = encode_frame(0, TYPE_SERVER_INFO, &server_info_payload);
+            if ws_tx.send(Message::Binary(frame)).await.is_err() {
+                return;
+            }
+        }
         while let Some(frame) = frame_rx.recv().await {
             if ws_tx.send(Message::Binary(frame)).await.is_err() {
                 break;
@@ -195,6 +214,15 @@ pub(crate) async fn handle_socket(socket: WebSocket) {
                             if frame_tx.send(ack).await.is_err() {
                                 warn!(stream_id, "icmp: failed to send ack");
                             }
+                        }
+                    }
+
+                    TYPE_PING => {
+                        // Echo the ping back as PONG with the same stream id and
+                        // payload. Client uses this to measure RTT.
+                        let pong = encode_frame(stream_id, TYPE_PONG, &payload);
+                        if frame_tx.send(pong).await.is_err() {
+                            debug!(stream_id, "ping: failed to send pong");
                         }
                     }
 

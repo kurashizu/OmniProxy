@@ -1,0 +1,52 @@
+[workspace]
+
+[package]
+name = "omniproxy-gui"
+version = "1.0.6-rc.2"
+edition = "2024"
+description = "OmniProxy Desktop GUI"
+default-run = "omniproxy-gui"
+
+[[bin]]
+name = "omniproxy-gui"
+path = "src/main.rs"
+
+[lib]
+name = "omniproxy_gui_lib"
+path = "src/lib.rs"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri          = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+serde          = { version = "1", features = ["derive"] }
+serde_json     = "1"
+serde_yaml     = "0.9"
+anyhow         = "1"
+tokio          = { version = "1", features = ["macros", "rt-multi-thread", "process", "io-util", "time", "sync", "fs"] }
+tracing        = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+thiserror      = "1"
+chrono         = { version = "0.4", default-features = false, features = ["clock"] }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.56", features = [
+    "Win32_Foundation",
+    "Win32_System_Threading",
+    "Win32_System_Console",
+    "Win32_Security",
+    "Win32_System_JobObjects",
+] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[profile.release]
+opt-level    = "z"
+strip        = true
+lto          = true
+codegen-units = 1
+panic        = "abort"

@@ -1,5 +1,6 @@
 use anyhow::Result;
 use bytes::{BufMut, Bytes, BytesMut};
+use serde::{Deserialize, Serialize};
 
 pub const TYPE_TCP_CONNECT: u8 = 0x01;
 pub const TYPE_TCP_CONNECTED: u8 = 0x02;
@@ -7,6 +8,20 @@ pub const TYPE_TCP_DATA: u8 = 0x03;
 pub const TYPE_TCP_FIN: u8 = 0x04;
 pub const TYPE_UDP_DATA: u8 = 0x05;
 pub const TYPE_ICMP_DATA: u8 = 0x06;
+pub const TYPE_SERVER_INFO: u8 = 0x07;
+pub const TYPE_PING: u8 = 0x08;
+pub const TYPE_PONG: u8 = 0x09;
+
+/// Metadata frame sent by the server immediately after WebSocket handshake.
+/// payload is UTF-8 JSON: {"outbound_ipv4": "1.2.3.4", "outbound_ipv6": "2001:db8::1"}
+/// Either or both fields may be null when the server cannot determine them.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ServerInfoPayload {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outbound_ipv4: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outbound_ipv6: Option<String>,
+}
 
 pub fn encode_frame(stream_id: u32, typ: u8, payload: &[u8]) -> Bytes {
     let mut buf = BytesMut::with_capacity(5 + payload.len());
@@ -80,4 +95,15 @@ pub fn decode_icmp_payload(payload: &[u8]) -> Result<(String, Bytes)> {
         .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned());
     let data = Bytes::copy_from_slice(&payload[2 + il..]);
     Ok((ip, data))
+}
+
+pub fn encode_server_info(info: &ServerInfoPayload) -> Result<Bytes> {
+    let json = serde_json::to_vec(info)?;
+    Ok(Bytes::from(json))
+}
+
+pub fn decode_server_info(payload: &Bytes) -> Result<ServerInfoPayload> {
+    let info: ServerInfoPayload = serde_json::from_slice(payload)
+        .map_err(|e| anyhow::anyhow!("invalid server_info JSON: {e}"))?;
+    Ok(info)
 }
