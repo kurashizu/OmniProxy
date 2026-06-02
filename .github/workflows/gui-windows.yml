@@ -142,7 +142,7 @@ jobs:
                   RUSTFLAGS: "-Ctarget-feature=+crt-static"
               shell: bash
               working-directory: gui
-              run: pnpm tauri build --target x86_64-pc-windows-msvc --bundles none
+              run: pnpm tauri build --target x86_64-pc-windows-msvc --no-bundle
 
             - name: Upload omniproxy-gui.exe
               uses: actions/upload-artifact@v7
