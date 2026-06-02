@@ -196,7 +196,6 @@ jobs:
                   mv dist/proxy.exe dist/resources/proxy.exe
                   mv dist/client.exe dist/resources/client.exe
                   mv dist/wintun.dll dist/resources/wintun.dll
-                  cp proxy/config.windows.yml dist/config.yml
                   cp README.md dist/ 2>/dev/null || true
                   ls -la dist
                   ls -la dist/resources
