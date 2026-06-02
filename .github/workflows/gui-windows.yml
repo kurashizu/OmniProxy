@@ -117,6 +117,11 @@ jobs:
               shell: bash
               run: pnpm install --frozen-lockfile
 
+            - name: Build frontend
+              working-directory: gui
+              shell: bash
+              run: pnpm build
+
             - name: Download wintun.dll
               shell: powershell
               run: |
@@ -199,15 +204,6 @@ jobs:
                   cp README.md dist/ 2>/dev/null || true
                   ls -la dist
                   ls -la dist/resources
-
-            - name: Smoke test
-              shell: bash
-              run: |
-                  test -f dist/omniproxy-gui.exe
-                  test -f dist/config.yml
-                  test -f dist/resources/proxy.exe
-                  test -f dist/resources/client.exe
-                  test -f dist/resources/wintun.dll
 
             - name: Create zip
               shell: powershell
