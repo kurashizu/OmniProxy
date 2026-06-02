@@ -37,7 +37,7 @@ jobs:
             - name: Cache cargo (workspace)
               uses: Swatinem/rust-cache@v2
               with:
-                  workspaces: "."
+                  workspaces: gui/src-tauri
                   cache-on-failure: true
 
             - name: Build proxy (release)
@@ -70,7 +70,7 @@ jobs:
             - name: Cache cargo (workspace)
               uses: Swatinem/rust-cache@v2
               with:
-                  workspaces: "."
+                  workspaces: gui/src-tauri
                   cache-on-failure: true
 
             - name: Build client (release)
