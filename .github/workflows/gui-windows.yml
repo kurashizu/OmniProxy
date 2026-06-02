@@ -1,331 +1,128 @@
 name: GUI (Windows)
 
-# Build and publish the Tauri 2 + Next.js desktop GUI for Windows.
-# Produces MSI and NSIS installers, and on `v*` tags attaches them to a
-# GitHub Release alongside the CLI artifacts.
-#
-# Triggers:
-#   - push of `v*` tag     → build + attach to release
-#   - workflow_dispatch    → build only (manual smoke test)
-
 on:
-    # Only build the GUI on the `testing` branch while it is in development.
-    # Once promoted to master + tagged, the CLI `release.yml` workflow can
-    # take over and bundle the GUI artifacts.
     push:
         branches:
             - testing
     workflow_dispatch:
 
 permissions:
-    contents: write   # needed to create / update the release
+    contents: write
+
+env:
+    CARGO_TARGET_DIR: target/ci
 
 jobs:
-    # ── Compile proxy (parallel) ──────────────────────────────────────
-    build-proxy:
-        name: Compile proxy.exe
+    build-and-package:
+        name: Build green GUI package
         runs-on: windows-latest
+
         steps:
             - name: Checkout
               uses: actions/checkout@v6
 
-            - name: Install Rust (stable, MSVC)
+            - name: Install Rust
               uses: dtolnay/rust-toolchain@stable
               with:
                   targets: x86_64-pc-windows-msvc
 
-            - name: Cache cargo (workspace)
+            - name: Cache cargo
               uses: Swatinem/rust-cache@v2
               with:
-                  workspaces: gui/src-tauri
+                  workspaces: "."
                   cache-on-failure: true
+                  shared-key: gui-windows
+                  cache-targets: true
 
-            - name: Build proxy (release)
+            - name: Install pnpm
+              uses: pnpm/action-setup@v4
+              with:
+                  version: 9
+
+            - name: Set up Node
+              uses: actions/setup-node@v4
+              with:
+                  node-version: "20"
+                  cache: "pnpm"
+                  cache-dependency-path: gui/pnpm-lock.yaml
+
+            - name: Install frontend deps
+              working-directory: gui
+              shell: bash
+              run: pnpm install --frozen-lockfile
+
+            - name: Build proxy.exe
               env:
+                  CARGO_TARGET_DIR: target/ci
                   RUSTFLAGS: "-Ctarget-feature=+crt-static"
               shell: bash
               run: cargo build -p proxy --release --target x86_64-pc-windows-msvc
 
-            - name: Upload proxy.exe
-              uses: actions/upload-artifact@v7
-              with:
-                  name: gui-proxy-exe
-                  path: target/x86_64-pc-windows-msvc/release/proxy.exe
-                  if-no-files-found: error
-                  retention-days: 1
-
-    # ── Compile client (parallel) ─────────────────────────────────────
-    build-client:
-        name: Compile client.exe
-        runs-on: windows-latest
-        steps:
-            - name: Checkout
-              uses: actions/checkout@v6
-
-            - name: Install Rust (stable, MSVC)
-              uses: dtolnay/rust-toolchain@stable
-              with:
-                  targets: x86_64-pc-windows-msvc
-
-            - name: Cache cargo (workspace)
-              uses: Swatinem/rust-cache@v2
-              with:
-                  workspaces: gui/src-tauri
-                  cache-on-failure: true
-
-            - name: Build client (release)
+            - name: Build client.exe
               env:
+                  CARGO_TARGET_DIR: target/ci
                   RUSTFLAGS: "-Ctarget-feature=+crt-static"
               shell: bash
               run: cargo build -p client --release --target x86_64-pc-windows-msvc
 
-            - name: Upload client.exe
-              uses: actions/upload-artifact@v7
-              with:
-                  name: gui-client-exe
-                  path: target/x86_64-pc-windows-msvc/release/client.exe
-                  if-no-files-found: error
-                  retention-days: 1
-
-    # ── Pre-compile GUI binary (parallel) ─────────────────────────────
-    # Pre-compiles `omniproxy-gui` so the final bundle job's
-    # `pnpm tauri build` only has to re-link with the real CLI binaries
-    # (incremental, fast). We seed `gui/src-tauri/resources/` with
-    # 0-byte stubs so tauri-build's existence check passes; the real
-    # proxy.exe / client.exe / wintun.dll are dropped in by the bundle
-    # job and tauri-build re-runs, regenerating the codegen and
-    # relinking with the real resources.
-    build-gui:
-        name: Pre-compile GUI binary
-        runs-on: windows-latest
-        steps:
-            - name: Checkout
-              uses: actions/checkout@v6
-
-            - name: Install Rust (stable, MSVC)
-              uses: dtolnay/rust-toolchain@stable
-              with:
-                  targets: x86_64-pc-windows-msvc
-
-            - name: Cache cargo (workspace)
-              uses: Swatinem/rust-cache@v2
-              with:
-                  workspaces: "."
-                  cache-on-failure: true
-
-            - name: Install pnpm
-              uses: pnpm/action-setup@v4
-              with:
-                  version: 9
-
-            - name: Set up Node
-              uses: actions/setup-node@v4
-              with:
-                  node-version: "20"
-                  cache: "pnpm"
-                  cache-dependency-path: gui/pnpm-lock.yaml
-
-            - name: Install pnpm dependencies (gui/)
-              working-directory: gui
-              shell: bash
-              run: pnpm install --frozen-lockfile
-
-            # tauri-build validates that every `bundle.resources` path
-            # exists at build-script time. Drop empty stubs so the
-            # pre-compile succeeds; the bundle job overwrites these
-            # with the real binaries before bundling.
-            - name: Seed resources/ with 0-byte stubs
-              working-directory: gui/src-tauri
-              shell: bash
-              run: |
-                  mkdir -p resources
-                  : > resources/proxy.exe
-                  : > resources/client.exe
-                  : > resources/wintun.dll
-
-            - name: Pre-compile omniproxy-gui
-              working-directory: gui/src-tauri
-              shell: bash
-              run: |
-                  cargo build -p omniproxy-gui --release --target x86_64-pc-windows-msvc
-                  ls -la target/x86_64-pc-windows-msvc/release/omniproxy-gui.exe
-
-            - name: Upload pre-compiled GUI target
-              uses: actions/upload-artifact@v7
-              with:
-                  name: gui-gui-target
-                  path: gui/src-tauri/target/x86_64-pc-windows-msvc/release/omniproxy-gui.exe
-                  if-no-files-found: error
-                  retention-days: 1
-
-    # ── Bundle (waits for all three compile jobs) ─────────────────────
-    # Drops the real CLI binaries + wintun.dll into
-    # `gui/src-tauri/resources/` (overwriting the stubs), then runs
-    # `pnpm tauri build`. tauri-build re-runs because the resource
-    # files changed, regenerates the codegen, and relinks omniproxy-gui
-    # — an incremental compile of just the codegen-affected Rust files.
-    # Then tauri-bundler produces the MSI and NSIS installers.
-    bundle:
-        name: Bundle MSI / NSIS
-        needs: [build-proxy, build-client, build-gui]
-        runs-on: windows-latest
-
-        steps:
-            - name: Checkout
-              uses: actions/checkout@v6
-
-            - name: Install Rust (stable, MSVC)
-              uses: dtolnay/rust-toolchain@stable
-              with:
-                  targets: x86_64-pc-windows-msvc
-
-            - name: Cache cargo (workspace)
-              uses: Swatinem/rust-cache@v2
-              with:
-                  workspaces: "."
-                  cache-on-failure: true
-
-            - name: Install pnpm
-              uses: pnpm/action-setup@v4
-              with:
-                  version: 9
-
-            - name: Set up Node
-              uses: actions/setup-node@v4
-              with:
-                  node-version: "20"
-                  cache: "pnpm"
-                  cache-dependency-path: gui/pnpm-lock.yaml
-
-            - name: Install pnpm dependencies (gui/)
-              working-directory: gui
-              shell: bash
-              run: pnpm install --frozen-lockfile
-
-            - name: Download proxy.exe
-              uses: actions/download-artifact@v8
-              with:
-                  name: gui-proxy-exe
-                  path: target/x86_64-pc-windows-msvc/release
-
-            - name: Download client.exe
-              uses: actions/download-artifact@v8
-              with:
-                  name: gui-client-exe
-                  path: target/x86_64-pc-windows-msvc/release
-
-            - name: Download wintun
-              continue-on-error: true
+            - name: Download wintun.dll
               shell: powershell
               run: |
                   curl.exe -sL https://www.wintun.net/builds/wintun-0.14.1.zip -o wintun.zip
-                  Expand-Archive -Force wintun.zip -DestinationPath .
-                  $dll = Get-ChildItem -Recurse -Path */bin/amd64/wintun.dll | Select-Object -First 1 -ExpandProperty FullName
-                  cp $dll target/x86_64-pc-windows-msvc/release/wintun.dll
+                  Expand-Archive -Force wintun.zip -DestinationPath wintun
+                  $dll = Get-ChildItem -Recurse -Path wintun -Filter wintun.dll | Select-Object -First 1 -ExpandProperty FullName
+                  if (-not $dll) { throw "wintun.dll not found" }
+                  Copy-Item $dll target/ci/x86_64-pc-windows-msvc/release/wintun.dll
 
-            - name: Download pre-compiled GUI binary
-              uses: actions/download-artifact@v8
-              with:
-                  name: gui-gui-target
-                  path: gui/src-tauri/target/x86_64-pc-windows-msvc/release
-
-            # ── Stage real binaries into Tauri resources ─────────────
-            # Overwrites the 0-byte stubs the pre-compile job seeded.
-            - name: Stage proxy / client / wintun into gui/src-tauri/resources/
-              working-directory: gui
+            - name: Seed Tauri resources
               shell: bash
+              working-directory: gui/src-tauri
               run: |
-                  mkdir -p src-tauri/resources
-                  cp -f ../target/x86_64-pc-windows-msvc/release/proxy.exe  src-tauri/resources/proxy.exe
-                  cp -f ../target/x86_64-pc-windows-msvc/release/client.exe src-tauri/resources/client.exe
-                  cp -f ../target/x86_64-pc-windows-msvc/release/wintun.dll src-tauri/resources/wintun.dll
-                  ls -la src-tauri/resources/
+                  mkdir -p resources
+                  cp ../../target/ci/x86_64-pc-windows-msvc/release/proxy.exe resources/proxy.exe
+                  cp ../../target/ci/x86_64-pc-windows-msvc/release/client.exe resources/client.exe
+                  cp ../../target/ci/x86_64-pc-windows-msvc/release/wintun.dll resources/wintun.dll
 
-            # ── Tauri build → MSI + NSIS ─────────────────────────────
-            # Cargo sees omniproxy-gui is largely up to date, but
-            # tauri-build re-runs (resource files changed) and
-            # regenerates the codegen, causing a small incremental
-            # relink. Then tauri-bundler packages MSI + NSIS.
-            - name: Tauri build (MSI + NSIS)
-              working-directory: gui
-              shell: bash
+            - name: Build omniproxy-gui.exe
               env:
-                  TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-                  TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-              run: pnpm tauri build --target x86_64-pc-windows-msvc
+                  CARGO_TARGET_DIR: target/ci
+                  RUSTFLAGS: "-Ctarget-feature=+crt-static"
+              shell: bash
+              working-directory: gui/src-tauri
+              run: cargo build -p omniproxy-gui --release --target x86_64-pc-windows-msvc
 
-            # ── Smoke test the produced binary ──────────────────────
-            - name: Verify installers were produced
+            - name: Assemble package
               shell: bash
               run: |
-                  set -e
-                  BUNDLE=gui/src-tauri/target/x86_64-pc-windows-msvc/release/bundle
-                  echo "MSI installers:"
-                  ls -la "$BUNDLE/msi/" || true
-                  echo "NSIS installers:"
-                  ls -la "$BUNDLE/nsis/" || true
-                  echo "Staged CLI binaries (these get embedded into installers):"
-                  ls -la gui/src-tauri/resources/ || true
-                  test -n "$(ls -A "$BUNDLE/msi/" 2>/dev/null)" || (echo "no MSI" && exit 1)
-                  test -n "$(ls -A "$BUNDLE/nsis/" 2>/dev/null)" || (echo "no NSIS" && exit 1)
-                  test -f gui/src-tauri/resources/proxy.exe  || (echo "staged proxy.exe missing"  && exit 1)
-                  test -f gui/src-tauri/resources/client.exe || (echo "staged client.exe missing" && exit 1)
+                  rm -rf dist
+                  mkdir -p dist/resources
+                  cp target/ci/x86_64-pc-windows-msvc/release/proxy.exe dist/
+                  cp target/ci/x86_64-pc-windows-msvc/release/client.exe dist/
+                  cp target/ci/x86_64-pc-windows-msvc/release/wintun.dll dist/resources/
+                  cp target/ci/x86_64-pc-windows-msvc/release/omniproxy-gui.exe dist/
+                  cp proxy/config.windows.yml dist/config.yml
+                  cp README.md dist/ 2>/dev/null || true
 
-            # ── Extract MSI to confirm CLI binaries are embedded ───
-            - name: Verify MSI embeds proxy.exe and client.exe
+            - name: Smoke test
+              shell: bash
+              run: |
+                  test -f dist/proxy.exe
+                  test -f dist/client.exe
+                  test -f dist/omniproxy-gui.exe
+                  test -f dist/resources/wintun.dll
+                  test -f dist/config.yml
+
+            - name: Create zip
               shell: powershell
               run: |
-                  $msi = Get-ChildItem -Path "gui\src-tauri\target\x86_64-pc-windows-msvc\release\bundle\msi" -Filter "*.msi" | Select-Object -First 1
-                  if (-not $msi) { throw "no MSI found" }
-                  Write-Host "Extracting $($msi.FullName) ..."
-                  $dir = "D:\msi-extract"
-                  if (Test-Path $dir) { Remove-Item -Recurse -Force $dir }
-                  New-Item -ItemType Directory -Path $dir | Out-Null
-                  $proc = Start-Process -FilePath "msiexec.exe" -ArgumentList "/a `"$($msi.FullName)`" /qn TARGETDIR=`"$dir`"" -Wait -PassThru
-                  if ($proc.ExitCode -ne 0) { throw "msiexec /a failed with exit code $($proc.ExitCode)" }
-                  Get-ChildItem -Path $dir -Recurse | Where-Object { $_.Name -match "^(proxy|client)\.exe$" } | Format-Table FullName, Length
-                  $proxy  = Get-ChildItem -Path $dir -Recurse | Where-Object { $_.Name -eq "proxy.exe" }  | Select-Object -First 1
-                  $client = Get-ChildItem -Path $dir -Recurse | Where-Object { $_.Name -eq "client.exe" } | Select-Object -First 1
-                  if (-not $proxy)  { throw "proxy.exe NOT FOUND inside MSI" }
-                  if (-not $client) { throw "client.exe NOT FOUND inside MSI" }
-                  Write-Host "MSI contains proxy.exe ($($proxy.Length) B) and client.exe ($($client.Length) B) - OK"
+                  $zip = "omniproxy-gui-windows-x86_64.zip"
+                  if (Test-Path $zip) { Remove-Item -Force $zip }
+                  Compress-Archive -Path dist\* -DestinationPath $zip
 
-            # ── Upload installers + raw exe as artifacts ────────────
-            - name: Upload GUI artifacts
+            - name: Upload package
               uses: actions/upload-artifact@v7
               with:
-                  name: gui-windows-x86_64
-                  path: |
-                      gui/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
-                      gui/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
-                      gui/src-tauri/target/x86_64-pc-windows-msvc/release/omniproxy-gui.exe
+                  name: omniproxy-gui-windows-x86_64
+                  path: omniproxy-gui-windows-x86_64.zip
                   if-no-files-found: error
                   retention-days: 14
-
-    # ── Release ───────────────────────────────────────────────────────
-    release:
-        name: Attach to GitHub Release
-        needs: bundle
-        if: startsWith(github.ref, 'refs/tags/v')
-        runs-on: ubuntu-latest
-
-        steps:
-            - name: Download GUI artifacts
-              uses: actions/download-artifact@v8
-              with:
-                  name: gui-windows-x86_64
-                  path: artifacts
-
-            - name: List downloaded artifacts
-              run: ls -la artifacts/
-
-            - name: Upload to release
-              uses: softprops/action-gh-release@v3
-              with:
-                  files: |
-                      artifacts/*.msi
-                      artifacts/*.exe
-                  generate_release_notes: true
-                  fail_on_unmatched_files: true
-              env:
-                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
