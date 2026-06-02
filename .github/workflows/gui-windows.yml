@@ -122,6 +122,7 @@ jobs:
                   Expand-Archive -Force wintun.zip -DestinationPath wintun
                   $dll = Get-ChildItem -Recurse -Path wintun -Filter wintun.dll | Select-Object -First 1 -ExpandProperty FullName
                   if (-not $dll) { throw "wintun.dll not found" }
+                  New-Item -ItemType Directory -Force -Path target/ci/x86_64-pc-windows-msvc/release | Out-Null
                   Copy-Item $dll target/ci/x86_64-pc-windows-msvc/release/wintun.dll
 
             - name: Seed Tauri resources
