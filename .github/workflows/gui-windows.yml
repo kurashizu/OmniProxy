@@ -10,7 +10,7 @@ permissions:
     contents: write
 
 env:
-    CARGO_TARGET_DIR: /home/runner/work/OmniProxy/OmniProxy/target/ci
+    CARGO_TARGET_DIR: ${{ github.workspace }}/target/ci
 
 jobs:
     build-proxy:
@@ -32,8 +32,22 @@ jobs:
                   cache-on-failure: true
                   cache-targets: true
 
+            - name: Install sccache
+              uses: mozilla-actions/sccache-action@v0.0.5
+
+            - name: Export GHA cache variables
+              uses: actions/github-script@v7
+              with:
+                  script: |
+                      core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || '');
+                      core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
             - name: Build proxy
               env:
+                  SCCACHE_GHA_ENABLED: "on"
+                  SCCACHE_GHA_CACHE_TO: sccache-${{ runner.os }}-${{ github.ref_name }}
+                  SCCACHE_GHA_CACHE_FROM: sccache-${{ runner.os }}-
+                  RUSTC_WRAPPER: sccache
                   RUSTFLAGS: "-Ctarget-feature=+crt-static"
               shell: bash
               run: cargo build -p proxy --release --target x86_64-pc-windows-msvc
@@ -42,7 +56,7 @@ jobs:
               uses: actions/upload-artifact@v7
               with:
                   name: gui-proxy-exe
-                  path: target/ci/x86_64-pc-windows-msvc/release/proxy.exe
+                  path: ${{ github.workspace }}/target/ci/x86_64-pc-windows-msvc/release/proxy.exe
                   if-no-files-found: error
                   retention-days: 2
 
@@ -65,8 +79,22 @@ jobs:
                   cache-on-failure: true
                   cache-targets: true
 
+            - name: Install sccache
+              uses: mozilla-actions/sccache-action@v0.0.5
+
+            - name: Export GHA cache variables
+              uses: actions/github-script@v7
+              with:
+                  script: |
+                      core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || '');
+                      core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
             - name: Build client
               env:
+                  SCCACHE_GHA_ENABLED: "on"
+                  SCCACHE_GHA_CACHE_TO: sccache-${{ runner.os }}-${{ github.ref_name }}
+                  SCCACHE_GHA_CACHE_FROM: sccache-${{ runner.os }}-
+                  RUSTC_WRAPPER: sccache
                   RUSTFLAGS: "-Ctarget-feature=+crt-static"
               shell: bash
               run: cargo build -p client --release --target x86_64-pc-windows-msvc
@@ -75,7 +103,7 @@ jobs:
               uses: actions/upload-artifact@v7
               with:
                   name: gui-client-exe
-                  path: target/ci/x86_64-pc-windows-msvc/release/client.exe
+                  path: ${{ github.workspace }}/target/ci/x86_64-pc-windows-msvc/release/client.exe
                   if-no-files-found: error
                   retention-days: 2
 
@@ -97,6 +125,16 @@ jobs:
                   shared-key: gui-windows
                   cache-on-failure: true
                   cache-targets: true
+
+            - name: Install sccache
+              uses: mozilla-actions/sccache-action@v0.0.5
+
+            - name: Export GHA cache variables
+              uses: actions/github-script@v7
+              with:
+                  script: |
+                      core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || '');
+                      core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
 
             - name: Install pnpm
               uses: pnpm/action-setup@v4
@@ -122,8 +160,8 @@ jobs:
                   Expand-Archive -Force wintun.zip -DestinationPath wintun
                   $dll = Get-ChildItem -Recurse -Path wintun -Filter wintun.dll | Select-Object -First 1 -ExpandProperty FullName
                   if (-not $dll) { throw "wintun.dll not found" }
-                  New-Item -ItemType Directory -Force -Path target/ci/x86_64-pc-windows-msvc/release | Out-Null
-                  Copy-Item $dll target/ci/x86_64-pc-windows-msvc/release/wintun.dll
+                  New-Item -ItemType Directory -Force -Path "$env:GITHUB_WORKSPACE/target/ci/x86_64-pc-windows-msvc/release" | Out-Null
+                  Copy-Item $dll "$env:GITHUB_WORKSPACE/target/ci/x86_64-pc-windows-msvc/release/wintun.dll"
 
             - name: Seed Tauri resources
               shell: bash
@@ -132,10 +170,14 @@ jobs:
                   mkdir -p resources
                   : > resources/proxy.exe
                   : > resources/client.exe
-                  cp ../../target/ci/x86_64-pc-windows-msvc/release/wintun.dll resources/wintun.dll
+                  cp "$GITHUB_WORKSPACE/target/ci/x86_64-pc-windows-msvc/release/wintun.dll" resources/wintun.dll
 
             - name: Build omniproxy-gui
               env:
+                  SCCACHE_GHA_ENABLED: "on"
+                  SCCACHE_GHA_CACHE_TO: sccache-${{ runner.os }}-${{ github.ref_name }}
+                  SCCACHE_GHA_CACHE_FROM: sccache-${{ runner.os }}-
+                  RUSTC_WRAPPER: sccache
                   RUSTFLAGS: "-Ctarget-feature=+crt-static"
               shell: bash
               working-directory: gui/src-tauri
@@ -145,7 +187,7 @@ jobs:
               uses: actions/upload-artifact@v7
               with:
                   name: gui-omniproxy-gui-exe
-                  path: target/ci/x86_64-pc-windows-msvc/release/omniproxy-gui.exe
+                  path: ${{ github.workspace }}/target/ci/x86_64-pc-windows-msvc/release/omniproxy-gui.exe
                   if-no-files-found: error
                   retention-days: 2
 
