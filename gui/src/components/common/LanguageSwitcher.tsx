@@ -1,18 +1,18 @@
 "use client";
 import { useAppStore } from "@/store/appStore";
-import { t } from "@/lib/i18n";
+import type { Locale } from "@/lib/schema";
 
 export function LanguageSwitcher() {
   const locale = useAppStore((s) => s.locale);
   const setLocale = useAppStore((s) => s.setLocale);
-  const next = locale === "en" ? "zh" : "en";
   return (
-    <button
-      onClick={() => setLocale(next)}
-      className="rounded-md border border-[#252934] bg-[#171a21] px-2 py-1 text-xs text-[#9ca3af] hover:text-[#e5e7eb] hover:border-[#3b82f6] transition-colors"
-      title="Toggle language"
+    <select
+      value={locale}
+      onChange={(e) => setLocale(e.target.value as Locale)}
+      className="text-sm"
     >
-      {locale === "en" ? "🌐 EN ⇄ 中" : "🌐 中 ⇄ EN"}
-    </button>
+      <option value="en">EN</option>
+      <option value="zh">中文</option>
+    </select>
   );
 }

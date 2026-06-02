@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, RwLock, mpsc, oneshot};
 use tokio_tungstenite::tungstenite::Message;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::config::Config;
 use crate::ws::build_ws;
@@ -314,7 +314,39 @@ impl Mux {
         }
     }
 
-    pub(crate) async fn connect_mux(cfg: &Config) -> Result<Arc<Self>> {
+    /// Classify a connection error. Returns `(user_message, log_detail)` for
+    /// fatal errors that should stop the client, or `None` for transient errors
+    /// that are worth retrying.
+    fn classify_connect_error(e: &anyhow::Error) -> Option<(&'static str, &'static str)> {
+        let msg = format!("{e:#}");
+        let msg_lower = msg.to_lowercase();
+        if msg.contains("AUTH_FAILED") {
+            Some((
+                "authentication failed: proxy token was rejected by the server",
+                "auth_failure",
+            ))
+        } else if msg_lower.contains("dns lookup failed")
+            || msg_lower.contains("no usable server address")
+            || msg_lower.contains("refused")
+            || msg_lower.contains("timed out")
+            || msg_lower.contains("tls handshake with")
+            || msg_lower.contains("ws handshake failed")
+        {
+            Some((
+                "server unreachable: could not connect to the proxy server",
+                "server_unreachable",
+            ))
+        } else {
+            None
+        }
+    }
+
+    /// Exit code used when the server token is rejected.
+    const EXIT_AUTH_FAILURE: i32 = 10;
+    /// Exit code used when the server cannot be reached.
+    const EXIT_SERVER_UNREACHABLE: i32 = 11;
+
+    pub(crate) async fn connect_mux(cfg: &Config) -> Arc<Self> {
         let mux = Arc::new(Mux::new(cfg.clone()));
 
         // Resolve server hostname → IP and start ipify refresh in background.
@@ -332,25 +364,36 @@ impl Mux {
 
         const MAX_RETRIES: u32 = 2;
         const RETRY_DELAY: Duration = Duration::from_secs(5);
-        let mut last_err = None;
 
         for attempt in 1..=MAX_RETRIES {
             match mux.connect().await {
                 Ok(disc_rx) => {
                     spawn_reconnect_loop(mux.clone(), disc_rx);
-                    return Ok(mux);
+                    return mux;
                 }
                 Err(e) => {
-                    warn!(attempt, max = MAX_RETRIES, "connection failed: {e:#}");
-                    last_err = Some(e);
+                    // Fatal errors (wrong token, server gone) → fail immediately
+                    if let Some((user_msg, tag)) = Self::classify_connect_error(&e) {
+                        eprintln!("{user_msg}");
+                        let code = if tag == "auth_failure" {
+                            Self::EXIT_AUTH_FAILURE
+                        } else {
+                            Self::EXIT_SERVER_UNREACHABLE
+                        };
+                        std::process::exit(code);
+                    }
                     if attempt < MAX_RETRIES {
+                        warn!(attempt, max = MAX_RETRIES, "connection failed: {e:#}");
                         tokio::time::sleep(RETRY_DELAY).await;
                     }
                 }
             }
         }
 
-        Err(last_err.unwrap_or_else(|| anyhow::anyhow!("connection failed")))
+        // All retries exhausted — treat as server unreachable
+        let final_msg = "server unreachable: could not connect to the proxy server";
+        eprintln!("{final_msg}");
+        std::process::exit(Self::EXIT_SERVER_UNREACHABLE);
     }
 
     fn alloc_id_locked(next: &AtomicU32, inner: &MuxInner) -> u32 {
@@ -799,6 +842,17 @@ fn spawn_reconnect_loop(mux: Arc<Mux>, mut disc_rx: oneshot::Receiver<()>) {
                         break;
                     }
                     Err(e) => {
+                        // Fatal reconnection errors → exit instead of retrying forever.
+                        if let Some((user_msg, tag)) = Mux::classify_connect_error(&e) {
+                            let code = if tag == "auth_failure" {
+                                Mux::EXIT_AUTH_FAILURE
+                            } else {
+                                Mux::EXIT_SERVER_UNREACHABLE
+                            };
+                            error!(tag, "fatal reconnect error: {user_msg}");
+                            eprintln!("{user_msg}");
+                            std::process::exit(code);
+                        }
                         warn!(error = %e, "reconnect failed, retry in {}s", delay.as_secs());
                         tokio::time::sleep(delay).await;
                         delay = (delay * 2).min(max_delay);

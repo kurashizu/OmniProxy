@@ -8,6 +8,8 @@ use anyhow::{Context, Result};
 use std::net::IpAddr;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::process::Stdio;
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::process::{Child, Command};
 use tokio::time::Duration;
@@ -16,6 +18,7 @@ use tracing::{debug, info, warn};
 pub fn spawn(bin: &std::path::Path, args: &[String], label: &str) -> Result<Child> {
     let child = Command::new(bin)
         .args(args)
+        .stderr(Stdio::piped())
         .kill_on_drop(true)
         .spawn()
         .map_err(|e| anyhow::anyhow!("spawn {label} ({bin:?}): {e}"))?;
@@ -82,6 +85,25 @@ pub async fn run_stack(
     let pid = client.id().unwrap_or(0);
     info!("[stack] client started (pid {})", pid);
 
+    // Relay client stderr → proxy stderr so the GUI can capture error messages.
+    if let Some(stderr) = client.stderr.take() {
+        tokio::spawn(async move {
+            let mut reader = BufReader::new(stderr).lines();
+            loop {
+                match reader.next_line().await {
+                    Ok(Some(line)) => {
+                        warn!("[client] {line}");
+                    }
+                    Ok(None) => break,
+                    Err(e) => {
+                        debug!("[stack] client stderr reader: {e}");
+                        break;
+                    }
+                }
+            }
+        });
+    }
+
     stats.client_alive.store(true, Ordering::Relaxed);
     stats.client_pid.store(pid, Ordering::Relaxed);
     *stats.socks_port.write().await = cfg.socks_port;
@@ -123,10 +145,17 @@ pub async fn run_stack(
         let fwd_result = tokio::select! {
             s = fwd.run() => { s }
             s = client.wait() => {
-                warn!("[stack] client exited: {:?}", s);
+                let status = s?;
+                let code = status.code().unwrap_or(-1);
+                let msg = match code {
+                    10 => "authentication failed: proxy token was rejected by the server",
+                    11 => "server unreachable: could not connect to the proxy server",
+                    _ => "client exited unexpectedly",
+                };
+                warn!("[stack] client exited (code {code}): {msg}");
                 fwd.shutdown();
                 forwarder::tun_down(&cfg);
-                break;
+                anyhow::bail!("{msg}");
             }
         };
 
@@ -156,11 +185,4 @@ pub async fn run_stack(
             }
         }
     }
-
-    info!("[stack] tearing down");
-    stats.client_alive.store(false, Ordering::Relaxed);
-    kill_quiet(&mut client).await;
-    info!("[stack] teardown complete");
-
-    Ok(())
 }

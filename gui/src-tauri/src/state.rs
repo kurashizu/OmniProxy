@@ -10,6 +10,9 @@ pub struct ProxyProcess {
     pub child: tokio::process::Child,
     #[allow(dead_code)]
     pub started_at: std::time::Instant,
+    /// Last line written to stderr before the process exited. Used to
+    /// show a meaningful connection-error message (wrong server / token).
+    pub last_error: Arc<tokio::sync::Mutex<Option<String>>>,
 }
 
 /// Snapshot of the proxy's lifecycle.

@@ -14,14 +14,14 @@
     "windows": [
       {
         "title": "OmniProxy",
-        "width": 1280,
-        "height": 800,
-        "minWidth": 1024,
-        "minHeight": 640,
-        "resizable": true,
+        "width": 600,
+        "height": 400,
+        "minWidth": 600,
+        "minHeight": 400,
+        "resizable": false,
         "fullscreen": false,
         "center": true,
-        "decorations": true
+        "decorations": false
       }
     ],
     "security": {

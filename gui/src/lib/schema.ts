@@ -1,5 +1,3 @@
-// Type definitions mirroring the Rust `GuiConfig` and admin JSON shapes.
-
 export interface NodeConfig {
   name: string;
   enabled: boolean;
@@ -103,5 +101,3 @@ export interface LogEntry {
 }
 
 export type Locale = "en" | "zh";
-
-export type ConnectionProtocol = "TCP" | "UDP" | "ICMP";

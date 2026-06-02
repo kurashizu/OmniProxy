@@ -37,11 +37,17 @@ async fn main() -> Result<()> {
     let shutdown = wait_shutdown_signal();
     tokio::pin!(shutdown);
 
-    tokio::select! {
-        _ = run_loop(cfg, stats) => {}
+    let result = tokio::select! {
+        r = run_loop(cfg, stats) => r,
         _ = shutdown => {
             info!("[main] received shutdown signal");
+            Ok(())
         }
+    };
+
+    if let Err(e) = result {
+        error!("[main] fatal error: {e:#}");
+        std::process::exit(1);
     }
 
     info!("[main] exiting");
@@ -103,13 +109,13 @@ async fn run_loop(cfg: Arc<config::Config>, stats: Arc<admin::ProxyStats>) -> Re
         match result {
             Ok(()) => {
                 info!("[main] stack exited normally");
+                warn!("[main] stack exited, restarting in 3s...");
+                tokio::time::sleep(Duration::from_secs(3)).await;
             }
             Err(e) => {
                 error!("[main] stack error: {e:#}");
+                return Err(e);
             }
         }
-
-        warn!("[main] stack exited, restarting in 3s...");
-        tokio::time::sleep(Duration::from_secs(3)).await;
     }
 }

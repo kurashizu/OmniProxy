@@ -6,16 +6,10 @@ export function useElevated(): boolean | null {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      try {
-        const v = await ipc.isElevated();
-        if (!cancelled) setElevated(v);
-      } catch {
-        if (!cancelled) setElevated(false);
-      }
+      try { const v = await ipc.isElevated(); if (!cancelled) setElevated(v); }
+      catch { if (!cancelled) setElevated(false); }
     })();
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, []);
   return elevated;
 }
@@ -25,16 +19,10 @@ export function useBinaryPresent(): boolean | null {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      try {
-        const v = await ipc.checkBinaryPresent();
-        if (!cancelled) setPresent(v);
-      } catch {
-        if (!cancelled) setPresent(false);
-      }
+      try { const v = await ipc.checkBinaryPresent(); if (!cancelled) setPresent(v); }
+      catch { if (!cancelled) setPresent(false); }
     })();
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, []);
   return present;
 }

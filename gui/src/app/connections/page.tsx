@@ -9,13 +9,14 @@ export default function ConnectionsPage() {
   const { state } = useProxyState();
   const isRunning = state.state === "running";
   const { data } = useClientConnections(isRunning);
-  const conns = data?.connections ?? [];
 
   return (
-    <div className="grid grid-cols-1 gap-4">
-      <ConnectionSummaryCard connections={conns} />
+    <div className="grid h-full grid-rows-[auto_auto_1fr] gap-3 min-h-0">
+      <ConnectionSummaryCard connections={data?.connections ?? []} />
       <ConnectionSearchCard />
-      <ConnectionListCard connections={conns} />
+      <div className="flex-1 min-h-0">
+        <ConnectionListCard connections={data?.connections ?? []} />
+      </div>
     </div>
   );
 }

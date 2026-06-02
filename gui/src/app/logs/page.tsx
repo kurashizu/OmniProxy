@@ -1,14 +1,14 @@
 "use client";
 import { LogFilterCard } from "@/components/logs/LogFilterCard";
 import { LogViewerCard } from "@/components/logs/LogViewerCard";
-import { useProxyLog } from "@/hooks/useProxyLog";
 
 export default function LogsPage() {
-  useProxyLog();
   return (
-    <div className="grid grid-cols-1 gap-4">
+    <div className="grid h-full grid-rows-[auto_1fr] gap-3 min-h-0">
       <LogFilterCard />
-      <LogViewerCard />
+      <div className="flex-1 min-h-0">
+        <LogViewerCard />
+      </div>
     </div>
   );
 }

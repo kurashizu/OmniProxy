@@ -9,53 +9,59 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 
 use crate::config::NodeConfig;
+use crate::state::ProxyProcess;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
-/// Locates the `proxy` binary.
+/// Locates a bundled binary (`proxy` or `client`) by searching:
 ///
-/// Resolution order:
-/// 1. `<gui-exe-dir>/<name>`             — manually staged next to exe
-/// 2. `<gui-exe-dir>/resources/<name>`   — Tauri MSI/NSIS bundle.resources default
-/// 3. `<cwd>/../../target/release/<name>` — dev fallback
-pub fn resolve_binary() -> Result<PathBuf> {
-    let exe_name = if cfg!(windows) { "proxy.exe" } else { "proxy" };
+/// 1. `<gui-exe-dir>/<name>`                    — manually staged next to exe
+/// 2. `<gui-exe-dir>/resources/<name>`          — Tauri MSI/NSIS bundle.resources
+/// 3. `<cwd>/../../target/release/<name>`       — dev fallback
+fn find_binary(name: &str) -> Result<PathBuf> {
+    let ext = if cfg!(windows) { ".exe" } else { "" };
+    let filename = format!("{name}{ext}");
 
     if let Ok(gui_exe) = std::env::current_exe()
         && let Some(dir) = gui_exe.parent()
     {
-        let p = dir.join(exe_name);
+        let p = dir.join(&filename);
         if p.is_file() {
             return Ok(p);
         }
-        // Tauri 2 places every entry of `bundle.resources` under
-        // `<install-dir>/resources/` (relative to the binary), not next
-        // to the exe itself. Look there too.
-        let p = dir.join("resources").join(exe_name);
+        let p = dir.join("resources").join(&filename);
         if p.is_file() {
             return Ok(p);
         }
     }
 
     if let Ok(cwd) = std::env::current_dir() {
-        let p = cwd
-            .join("..")
-            .join("..")
-            .join("target")
-            .join("release")
-            .join(exe_name);
+        let p = cwd.join("..").join("..").join("target").join("release").join(&filename);
         if p.is_file() {
             return Ok(p);
         }
     }
 
     Err(anyhow::anyhow!(
-        "proxy binary not found: looked for {} next to GUI exe, in <exe-dir>/resources/, and at <cwd>/../../target/release/",
-        exe_name
+        "binary {filename} not found: looked next to GUI exe, in <exe-dir>/resources/, and at <cwd>/../../target/release/"
     ))
 }
 
-/// Convert a `NodeConfig` into the proxy CLI argument vector.
-pub fn build_cli_args(node: &NodeConfig) -> Vec<String> {
+/// Locates the `proxy` binary (calls `find_binary("proxy")`).
+pub fn resolve_binary() -> Result<PathBuf> {
+    find_binary("proxy")
+}
+
+/// Locates the `client` binary (calls `find_binary("client")`).
+pub fn resolve_client_binary() -> Result<PathBuf> {
+    find_binary("client")
+}
+
+/// Convert a `NodeConfig` + client binary path into the proxy CLI argument vector.
+pub fn build_cli_args(node: &NodeConfig, client_path: &Path) -> Vec<String> {
     let mut args = vec![
+        "--client".to_string(),
+        client_path.display().to_string(),
         "--server".to_string(),
         node.server.clone(),
         "--socks-port".to_string(),
@@ -90,8 +96,9 @@ pub fn build_cli_args(node: &NodeConfig) -> Vec<String> {
     args
 }
 
-/// Spawn the proxy process. Returns the running child and the kill handle.
-pub fn spawn_proxy(bin: &Path, args: &[String], app: &tauri::AppHandle) -> Result<Child> {
+/// Spawn the proxy process. Returns a `ProxyProcess` containing the child
+/// handle and a shared buffer holding the last stderr line (for errors).
+pub fn spawn_proxy(bin: &Path, args: &[String], app: &tauri::AppHandle) -> Result<ProxyProcess> {
     let mut cmd = Command::new(bin);
     cmd.args(args)
         .stdin(Stdio::null())
@@ -112,19 +119,29 @@ pub fn spawn_proxy(bin: &Path, args: &[String], app: &tauri::AppHandle) -> Resul
         .with_context(|| format!("spawn proxy at {}", bin.display()))?;
 
     let pid = child.id().unwrap_or(0);
+    let last_error = Arc::new(Mutex::new(None));
 
     if let Some(stdout) = child.stdout.take() {
-        spawn_log_reader(stdout, "stdout", app);
+        spawn_log_reader(stdout, "stdout", app, None);
     }
     if let Some(stderr) = child.stderr.take() {
-        spawn_log_reader(stderr, "stderr", app);
+        spawn_log_reader(stderr, "stderr", app, Some(last_error.clone()));
     }
 
     tracing::info!(pid, "proxy spawned");
-    Ok(child)
+    Ok(ProxyProcess {
+        child,
+        started_at: std::time::Instant::now(),
+        last_error,
+    })
 }
 
-fn spawn_log_reader<R>(reader: R, stream: &'static str, app: &tauri::AppHandle)
+fn spawn_log_reader<R>(
+    reader: R,
+    stream: &'static str,
+    app: &tauri::AppHandle,
+    last_error: Option<Arc<Mutex<Option<String>>>>,
+)
 where
     R: tokio::io::AsyncRead + Unpin + Send + 'static,
 {
@@ -135,6 +152,14 @@ where
             match lines.next_line().await {
                 Ok(Some(line)) => {
                     let line = truncate_line(&line, 8 * 1024);
+                    // Keep a copy of the last stderr line so the waiter
+                    // can surface it as a user-facing error message.
+                    if let Some(ref buf) = last_error
+                        && stream == "stderr"
+                    {
+                        let mut g = buf.lock().await;
+                        *g = Some(line.clone());
+                    }
                     let _ = app.emit(
                         "proxy-log",
                         serde_json::json!({

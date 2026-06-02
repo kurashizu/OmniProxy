@@ -6,7 +6,8 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::sync::{OnceLock, RwLock};
 use tokio::net::TcpStream;
-use tokio_tungstenite::tungstenite::http::Request;
+use tokio_tungstenite::tungstenite::http::{Request, StatusCode};
+use tokio_tungstenite::tungstenite::Error as WsError;
 use tracing::info;
 
 use crate::config::Config;
@@ -58,9 +59,15 @@ pub(crate) async fn build_ws(cfg: &Config) -> Result<WsStream> {
         .with_context(|| format!("tls handshake with {}", conn.host))?;
 
     let request = build_ws_request(&conn, &cfg.token, random_ws_key())?;
-    let (ws, _) = tokio_tungstenite::client_async(request, tls)
-        .await
-        .with_context(|| format!("ws handshake failed: {}", conn.host))?;
+    let (ws, _) = match tokio_tungstenite::client_async(request, tls).await {
+        Ok(r) => r,
+        Err(e) if matches!(&e, WsError::Http(r) if r.status() == StatusCode::UNAUTHORIZED) => {
+            anyhow::bail!("AUTH_FAILED: proxy token was rejected by the server");
+        }
+        Err(e) => {
+            anyhow::bail!("ws handshake failed: {}: {}", conn.host, e);
+        }
+    };
 
     Ok(ws)
 }

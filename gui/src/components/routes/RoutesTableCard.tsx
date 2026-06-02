@@ -12,25 +12,21 @@ export function RoutesTableCard({ routes }: { routes: ProxyRoute[] }) {
     <Card
       title={`${t("routes.title", locale)} (${routes.length})`}
       extra={
-        <div className="flex items-center gap-2 text-xs">
-          <button
-            onClick={() => setPaused(!paused)}
-            className="rounded border border-[#252934] bg-[#0f1115] px-2 py-0.5 text-[#9ca3af] hover:text-[#e5e7eb] hover:border-[#3b82f6]"
-          >
-            {paused ? t("routes.resume", locale) : t("routes.pause", locale)}
-          </button>
-        </div>
+        <button onClick={() => setPaused(!paused)}
+          className="rounded border border-border bg-surface px-2 py-0.5 text-muted hover:text-text hover:border-primary text-xs"
+        >
+          {paused ? t("routes.resume", locale) : t("routes.pause", locale)}
+        </button>
       }
-      bodyClassName="p-0"
+      className="h-full"
+      bodyClassName="p-0 min-h-0"
     >
-      <div className="overflow-auto">
+      <div className="h-full overflow-auto">
         {routes.length === 0 ? (
-          <div className="px-4 py-8 text-center text-sm text-[#6b7280]">
-            {t("routes.empty", locale)}
-          </div>
+          <div className="px-4 py-8 text-center text-sm text-[#6b7280]">{t("routes.empty", locale)}</div>
         ) : (
           <table className="w-full text-sm">
-            <thead className="text-[11px] uppercase text-[#9ca3af]">
+            <thead className="text-[11px] uppercase text-muted">
               <tr>
                 <th className="px-3 py-2 text-left">{t("routes.destination", locale)}</th>
                 <th className="px-3 py-2 text-left">{t("routes.gateway", locale)}</th>
@@ -39,14 +35,10 @@ export function RoutesTableCard({ routes }: { routes: ProxyRoute[] }) {
             </thead>
             <tbody>
               {routes.map((r, i) => (
-                <tr key={i} className="border-t border-[#252934]">
-                  <td className="px-3 py-1.5 text-[#e5e7eb] tabular-nums">
-                    {r.destination}
-                  </td>
-                  <td className="px-3 py-1.5 text-[#9ca3af] tabular-nums">
-                    {r.gateway}
-                  </td>
-                  <td className="px-3 py-1.5 text-[#9ca3af]">{r.interface}</td>
+                <tr key={i} className="border-t border-border">
+                  <td className="px-3 py-1.5 text-text tabular-nums">{r.destination}</td>
+                  <td className="px-3 py-1.5 text-muted tabular-nums">{r.gateway}</td>
+                  <td className="px-3 py-1.5 text-muted">{r.interface}</td>
                 </tr>
               ))}
             </tbody>

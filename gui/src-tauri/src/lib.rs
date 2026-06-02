@@ -263,7 +263,7 @@ pub fn run() {
             let state: tauri::State<'_, AppState> = app_handle.state();
             let child_arc = state.child.clone();
             let proxy_state = state.proxy_state.clone();
-            tokio::spawn(async move {
+            tauri::async_runtime::spawn(async move {
                 let mut g = child_arc.lock().await;
                 if let Some(mut p) = g.take() {
                     crate::process::kill_child(&mut p.child).await;

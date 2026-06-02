@@ -58,9 +58,20 @@ pub async fn start_proxy(app: AppHandle, state: State<'_, AppState>) -> Result<P
         *p = Some(bin.clone());
     }
 
-    let args = crate::process::build_cli_args(&node);
-    let child = match crate::process::spawn_proxy(&bin, &args, &app) {
-        Ok(c) => c,
+    let client_bin = match crate::process::resolve_client_binary() {
+        Ok(b) => b,
+        Err(e) => {
+            let mut s = state.proxy_state.lock().await;
+            s.state = ProxyStateKind::Error;
+            s.message = Some(format!("{e:#}"));
+            emit_state(&app, &state).await;
+            return Ok(s.clone());
+        }
+    };
+
+    let args = crate::process::build_cli_args(&node, &client_bin);
+    let proc = match crate::process::spawn_proxy(&bin, &args, &app) {
+        Ok(p) => p,
         Err(e) => {
             let mut s = state.proxy_state.lock().await;
             s.state = ProxyStateKind::Error;
@@ -69,7 +80,7 @@ pub async fn start_proxy(app: AppHandle, state: State<'_, AppState>) -> Result<P
             return Ok(s.clone());
         }
     };
-    let pid = child.id().unwrap_or(0);
+    let pid = proc.child.id().unwrap_or(0);
     {
         let mut s = state.proxy_state.lock().await;
         s.state = ProxyStateKind::Running;
@@ -77,10 +88,7 @@ pub async fn start_proxy(app: AppHandle, state: State<'_, AppState>) -> Result<P
     }
     {
         let mut child_slot = state.child.lock().await;
-        *child_slot = Some(crate::state::ProxyProcess {
-            child,
-            started_at: std::time::Instant::now(),
-        });
+        *child_slot = Some(proc);
     }
     emit_state(&app, &state).await;
 
@@ -98,10 +106,20 @@ pub async fn start_proxy(app: AppHandle, state: State<'_, AppState>) -> Result<P
         let mut s = state_arc.lock().await;
         // Only update if we were running (not stopped intentionally)
         if matches!(s.state, ProxyStateKind::Running | ProxyStateKind::Starting) {
+            let code = exit.as_ref().ok().and_then(|e| e.code());
+            s.exit_code = code;
             s.state = ProxyStateKind::Stopped;
             s.pid = 0;
-            s.exit_code = exit.as_ref().ok().and_then(|e| e.code());
-            s.message = exit.err().map(|e| e.to_string());
+            if code != Some(0) {
+                let last_error = proc.last_error.lock().await;
+                s.message = Some(
+                    last_error
+                        .clone()
+                        .unwrap_or_else(|| format!("proxy exited with code {}", code.unwrap_or(-1))),
+                );
+            } else {
+                s.message = None;
+            }
         }
         drop(s);
         let mut guard = child_arc.lock().await;

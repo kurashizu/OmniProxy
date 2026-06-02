@@ -1,36 +1,45 @@
 "use client";
 import Image from "next/image";
+import { useEffect, useRef } from "react";
 import { useAppStore } from "@/store/appStore";
-import { LanguageSwitcher } from "@/components/common/LanguageSwitcher";
 import { t } from "@/lib/i18n";
-import { openExternalUrl } from "@/lib/ipc";
+
+type TauriWin = { minimize(): Promise<void>; close(): Promise<void> };
 
 export function TopBar() {
   const locale = useAppStore((s) => s.locale);
+  const winRef = useRef<TauriWin | null>(null);
+
+  useEffect(() => {
+    import("@tauri-apps/api/window")
+      .then((m) => { winRef.current = m.getCurrentWindow() as TauriWin; })
+      .catch(() => {});
+  }, []);
+
   return (
-    <header className="flex items-center justify-between border-b border-[#252934] bg-[#0f1115] px-4 h-12 flex-none">
-      <div className="flex items-center gap-2">
-        <Image
-          src="/icon.png"
-          alt="OmniProxy"
-          width={28}
-          height={28}
-          className="rounded"
-        />
-        <span className="text-[#e5e7eb] font-semibold tracking-wide">
+    <header data-tauri-drag-region className="flex items-center justify-between bg-surface h-9 flex-none select-none">
+      <div className="flex items-center gap-2 pl-3">
+        <Image src="/icon.png" alt="OmniProxy" width={22} height={22} className="rounded" />
+        <span className="text-text text-[13px] font-semibold tracking-wide">
           {t("app.name", locale)}
         </span>
       </div>
-      <div className="flex items-center gap-2">
-        <LanguageSwitcher />
+      <div className="flex">
         <button
-          onClick={() =>
-            openExternalUrl("https://github.com/kurashizu/OmniProxy")
-          }
-          className="rounded-md border border-[#252934] bg-[#171a21] px-2 py-1 text-xs text-[#9ca3af] hover:text-[#e5e7eb] hover:border-[#3b82f6] transition-colors"
-          title="Help"
+          onClick={() => winRef.current?.minimize()}
+          className="flex items-center justify-center w-9 h-9 text-muted hover:text-text hover:bg-border transition-colors"
         >
-          ?
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+            <path d="M2 6h8" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+          </svg>
+        </button>
+        <button
+          onClick={() => winRef.current?.close()}
+          className="flex items-center justify-center w-9 h-9 text-muted hover:text-white hover:bg-danger transition-colors"
+        >
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+            <path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+          </svg>
         </button>
       </div>
     </header>

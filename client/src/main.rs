@@ -43,7 +43,7 @@ async fn main() -> Result<()> {
         .with_context(|| format!("failed to bind SOCKS5 on {bind}"))?;
     info!("SOCKS5 listening on {bind}");
 
-    let mux = Mux::connect_mux(&cfg).await?;
+    let mux = Mux::connect_mux(&cfg).await;
 
     start_admin(mux.clone(), &cfg);
     crate::mux::spawn_latency_pinger(mux.clone());
