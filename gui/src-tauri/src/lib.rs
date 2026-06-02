@@ -118,7 +118,7 @@ fn init_logging() {
         .unwrap_or_else(|_| "omniproxy_gui=info,tauri=info,wry=warn".into());
 
     let file_layer = fmt::layer()
-        .with_writer(|| LogFileWriter)
+        .with_writer(|| LogFileGuard)
         .with_ansi(false)
         .with_target(true)
         .with_thread_ids(false);
@@ -168,16 +168,9 @@ fn init_logging() {
     }));
 }
 
-/// `tracing::MakeWriter` that writes to the global `LOG_FILE`. Used by
-/// the file layer of the tracing subscriber so the two streams (raw
-/// `log_line` and tracing) end up in the same file.
-struct LogFileWriter;
-impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogFileWriter {
-    type Writer = LogFileGuard;
-    fn make_writer(&'a self) -> Self::Writer {
-        LogFileGuard
-    }
-}
+/// `tracing::MakeWriter` guard that writes to the global `LOG_FILE`.
+/// Used in a closure `|| LogFileGuard` with `tracing_subscriber::fmt::Layer::with_writer`.
+/// The closure implements `MakeWriter` automatically via the blanket impl.
 struct LogFileGuard;
 impl Write for LogFileGuard {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
