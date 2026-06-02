@@ -117,11 +117,6 @@ jobs:
               shell: bash
               run: pnpm install --frozen-lockfile
 
-            - name: Build frontend
-              working-directory: gui
-              shell: bash
-              run: pnpm build
-
             - name: Download wintun.dll
               shell: powershell
               run: |
@@ -146,8 +141,8 @@ jobs:
                   CARGO_INCREMENTAL: "0"
                   RUSTFLAGS: "-Ctarget-feature=+crt-static"
               shell: bash
-              working-directory: gui/src-tauri
-              run: cargo build -p omniproxy-gui --release --target x86_64-pc-windows-msvc
+              working-directory: gui
+              run: pnpm tauri build --target x86_64-pc-windows-msvc --bundles none
 
             - name: Upload omniproxy-gui.exe
               uses: actions/upload-artifact@v7
