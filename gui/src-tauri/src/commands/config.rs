@@ -35,6 +35,20 @@ pub async fn open_config_dir(state: State<'_, AppState>) -> Result<(), String> {
     open_in_os_file_manager(dir).map_err(|e| e.to_string())
 }
 
+/// Return the path to the directory containing the GUI's rotating log
+/// files. Surfaced in the UI so users can find the file after a crash.
+#[tauri::command]
+pub fn log_dir() -> String {
+    crate::log_dir().display().to_string()
+}
+
+/// Open the GUI's log directory in the OS file manager.
+#[tauri::command]
+pub async fn open_log_dir() -> Result<(), String> {
+    let dir = crate::log_dir();
+    open_in_os_file_manager(&dir).map_err(|e| e.to_string())
+}
+
 #[cfg(windows)]
 fn open_in_os_file_manager(path: &std::path::Path) -> std::io::Result<()> {
     std::process::Command::new("explorer")

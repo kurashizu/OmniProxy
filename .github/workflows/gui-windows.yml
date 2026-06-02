@@ -4,26 +4,45 @@ name: GUI (Windows)
 # Produces MSI and NSIS installers, and on `v*` tags attaches them to a
 # GitHub Release alongside the CLI artifacts.
 #
+# This workflow is intentionally a SINGLE end-to-end job (no cross-job
+# artifact handoff): proxy + client + wintun + pnpm frontend + Tauri
+# build + installer verification all run in one go on a single
+# windows-latest runner. A `release` job attaches the produced
+# installers to the GitHub release on `v*` tag pushes.
+#
 # Triggers:
 #   - push of `v*` tag     → build + attach to release
 #   - workflow_dispatch    → build only (manual smoke test)
 
 on:
-    # Only build the GUI on the `tesing` branch while it is in development.
+    # Only build the GUI on the `testing` branch while it is in development.
     # Once promoted to master + tagged, the CLI `release.yml` workflow can
     # take over and bundle the GUI artifacts.
     push:
         branches:
-            - tesing
+            - testing
     workflow_dispatch:
 
 permissions:
     contents: write   # needed to create / update the release
 
 jobs:
-    # ── Build ──────────────────────────────────────────────────────────
-    build-gui:
-        name: Build Tauri MSI / NSIS
+    # ── Build (single end-to-end) ─────────────────────────────────────
+    # Order of operations on a single windows-latest runner:
+    #   1. checkout
+    #   2. rust + pnpm + node toolchains (cached)
+    #   3. cargo build -p proxy -p client  (release, MSVC, static CRT)
+    #   4. download wintun.dll next to the CLIs
+    #   5. pnpm install --frozen-lockfile  (gui frontend)
+    #   6. stage proxy.exe / client.exe / wintun.dll into
+    #      gui/src-tauri/resources/  (Tauri bundle.resources copies
+    #      them into bundle/resources/ at build time)
+    #   7. pnpm tauri build --target x86_64-pc-windows-msvc
+    #      (compiles omniproxy-gui, runs tauri-codegen, builds MSI + NSIS)
+    #   8. smoke-test installers and the MSI payload (msiexec /a)
+    #   9. upload MSI/NSIS/raw-exe as the gui-windows-x86_64 artifact
+    build:
+        name: Build Tauri MSI / NSIS (end-to-end)
         runs-on: windows-latest
 
         steps:
@@ -55,9 +74,9 @@ jobs:
                   cache: "pnpm"
                   cache-dependency-path: gui/pnpm-lock.yaml
 
-            # ── Build CLI binaries (the GUI spawns these) ───────────
-            # We build them with the same target Tauri uses so file
-            # naming (.exe) and ABI match the final installer.
+            # ── Build CLI binaries the GUI spawns ───────────────────
+            # Built with the same target Tauri uses so file naming
+            # (.exe) and ABI match the final installer.
             - name: Build proxy / client (release)
               env:
                   RUSTFLAGS: "-Ctarget-feature=+crt-static"
@@ -75,28 +94,29 @@ jobs:
                   $dll = Get-ChildItem -Recurse -Path */bin/amd64/wintun.dll | Select-Object -First 1 -ExpandProperty FullName
                   cp $dll target/x86_64-pc-windows-msvc/release/wintun.dll
 
-            # ── Install GUI dependencies ────────────────────────────
+            # ── Install GUI frontend dependencies ────────────────────
             - name: Install pnpm dependencies (gui/)
               working-directory: gui
               shell: bash
               run: pnpm install --frozen-lockfile
 
-            # ── Stage proxy / client into Tauri resources ──────────
+            # ── Stage CLI binaries + wintun into Tauri resources ────
             # Tauri's bundle.resources only picks up files that exist
             # at tauri build time, so we have to copy the CLI binaries
-            # into gui/src-tauri/resources/ BEFORE the build runs.
-            # Tauri then packages them into bundle/resources/ and
-            # embeds them in the MSI/NSIS installers automatically.
-            - name: Stage proxy / client into gui/src-tauri/resources/
+            # and wintun.dll into gui/src-tauri/resources/ BEFORE the
+            # build runs. Tauri then packages them into the MSI/NSIS
+            # payload automatically.
+            - name: Stage proxy / client / wintun into gui/src-tauri/resources/
               working-directory: gui
               shell: bash
               run: |
                   mkdir -p src-tauri/resources
                   cp -f ../target/x86_64-pc-windows-msvc/release/proxy.exe  src-tauri/resources/proxy.exe
                   cp -f ../target/x86_64-pc-windows-msvc/release/client.exe src-tauri/resources/client.exe
+                  cp -f ../target/x86_64-pc-windows-msvc/release/wintun.dll src-tauri/resources/wintun.dll
                   ls -la src-tauri/resources/
 
-            # ── Tauri build (this is the long step) ─────────────────
+            # ── Tauri build (compiles omniproxy-gui + bundles MSI/NSIS) ─
             - name: Tauri build (MSI + NSIS)
               working-directory: gui
               shell: bash
@@ -162,7 +182,7 @@ jobs:
     # ── Release ───────────────────────────────────────────────────────
     release:
         name: Attach to GitHub Release
-        needs: build-gui
+        needs: build
         if: startsWith(github.ref, 'refs/tags/v')
         runs-on: ubuntu-latest
 
