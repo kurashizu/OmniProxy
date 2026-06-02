@@ -13,8 +13,9 @@ use crate::config::NodeConfig;
 /// Locates the `proxy` binary.
 ///
 /// Resolution order:
-/// 1. `<gui-exe-dir>/proxy[.exe]`
-/// 2. `<cwd>/../../target/release/proxy[.exe]` (dev fallback)
+/// 1. `<gui-exe-dir>/<name>`             — manually staged next to exe
+/// 2. `<gui-exe-dir>/resources/<name>`   — Tauri MSI/NSIS bundle.resources default
+/// 3. `<cwd>/../../target/release/<name>` — dev fallback
 pub fn resolve_binary() -> Result<PathBuf> {
     let exe_name = if cfg!(windows) { "proxy.exe" } else { "proxy" };
 
@@ -22,6 +23,13 @@ pub fn resolve_binary() -> Result<PathBuf> {
         && let Some(dir) = gui_exe.parent()
     {
         let p = dir.join(exe_name);
+        if p.is_file() {
+            return Ok(p);
+        }
+        // Tauri 2 places every entry of `bundle.resources` under
+        // `<install-dir>/resources/` (relative to the binary), not next
+        // to the exe itself. Look there too.
+        let p = dir.join("resources").join(exe_name);
         if p.is_file() {
             return Ok(p);
         }
@@ -40,7 +48,7 @@ pub fn resolve_binary() -> Result<PathBuf> {
     }
 
     Err(anyhow::anyhow!(
-        "proxy binary not found: looked for {} next to GUI exe and at <cwd>/../../target/release/",
+        "proxy binary not found: looked for {} next to GUI exe, in <exe-dir>/resources/, and at <cwd>/../../target/release/",
         exe_name
     ))
 }
