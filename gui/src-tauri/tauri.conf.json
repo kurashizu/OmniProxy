@@ -34,7 +34,8 @@
     "publisher": "kurashizu",
     "resources": [
       "resources/proxy.exe",
-      "resources/client.exe"
+      "resources/client.exe",
+      "resources/wintun.dll"
     ],
     "icon": [
       "icons/32x32.png",

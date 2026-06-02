@@ -135,20 +135,20 @@ jobs:
             # pre-compile succeeds; the bundle job overwrites these
             # with the real binaries before bundling.
             - name: Seed resources/ with 0-byte stubs
-              working-directory: gui
+              working-directory: gui/src-tauri
               shell: bash
               run: |
-                  mkdir -p src-tauri/resources
-                  : > src-tauri/resources/proxy.exe
-                  : > src-tauri/resources/client.exe
-                  : > src-tauri/resources/wintun.dll
+                  mkdir -p resources
+                  : > resources/proxy.exe
+                  : > resources/client.exe
+                  : > resources/wintun.dll
 
             - name: Pre-compile omniproxy-gui
-              working-directory: gui
+              working-directory: gui/src-tauri
               shell: bash
               run: |
                   cargo build -p omniproxy-gui --release --target x86_64-pc-windows-msvc
-                  ls -la src-tauri/target/x86_64-pc-windows-msvc/release/omniproxy-gui.exe
+                  ls -la target/x86_64-pc-windows-msvc/release/omniproxy-gui.exe
 
             - name: Upload pre-compiled GUI target
               uses: actions/upload-artifact@v7
