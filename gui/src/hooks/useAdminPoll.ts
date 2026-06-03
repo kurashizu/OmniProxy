@@ -1,13 +1,26 @@
-import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ipc, fetchAdmin } from "@/lib/ipc";
+import { ipc } from "@/lib/ipc";
 import type { ClientStats, ProxyStats, ProxyRoute } from "@/lib/schema";
 
-function useAdminPoll<T>(baseUrl: string | null, path: string, intervalMs: number, enabled: boolean) {
+/**
+ * Polls the proxy / client admin `/stats` endpoint via a Rust-side
+ * Tauri command. We don't use the webview's `fetch()` because
+ * WebView2 has been observed to silently fail on loopback requests
+ * in some configurations, leaving the UI stuck on placeholders.
+ *
+ * The Rust command short-circuits to `None` when no proxy is
+ * running, so polling an idle GUI has no cost beyond an IPC roundtrip.
+ */
+function useAdminPoll<T>(
+  command: () => Promise<T | null>,
+  key: string,
+  intervalMs: number,
+  enabled: boolean,
+) {
   return useQuery<T | null>({
-    queryKey: ["admin", baseUrl, path, intervalMs],
-    queryFn: ({ signal }) => fetchAdmin<T>(baseUrl ?? "", path, signal),
-    enabled: enabled && !!baseUrl,
+    queryKey: ["admin", key, intervalMs],
+    queryFn: () => command(),
+    enabled,
     refetchInterval: enabled ? intervalMs : false,
     refetchIntervalInBackground: false,
     staleTime: 0,
@@ -15,40 +28,17 @@ function useAdminPoll<T>(baseUrl: string | null, path: string, intervalMs: numbe
 }
 
 export function useProxyStats(running: boolean) {
-  const [baseUrl, setBaseUrl] = useState<string | null>(null);
-  useEffect(() => {
-    ipc.getProxyAdminUrl().then(setBaseUrl).catch(() => setBaseUrl(null));
-  }, []);
-  return useAdminPoll<ProxyStats>(baseUrl, "/stats", 1000, running);
+  return useAdminPoll<ProxyStats>(ipc.proxyStats, "proxy", 1000, running);
 }
 
 export function useProxyRoutes(running: boolean) {
-  const [baseUrl, setBaseUrl] = useState<string | null>(null);
-  useEffect(() => {
-    ipc.getProxyAdminUrl().then(setBaseUrl).catch(() => setBaseUrl(null));
-  }, []);
-  return useQuery<ProxyRoute[] | null>({
-    queryKey: ["admin", baseUrl, "/routes", 5000],
-    queryFn: ({ signal }) =>
-      fetchAdmin<{ routes: ProxyRoute[] }>(baseUrl ?? "", "/routes", signal)
-        .then((r) => r?.routes ?? null),
-    enabled: running && !!baseUrl,
-    refetchInterval: running ? 5000 : false,
-  });
+  return useAdminPoll<ProxyRoute[]>(ipc.proxyRoutes, "proxy-routes", 5000, running);
 }
 
 export function useClientStats(running: boolean) {
-  const [baseUrl, setBaseUrl] = useState<string | null>(null);
-  useEffect(() => {
-    ipc.getClientAdminUrl().then(setBaseUrl).catch(() => setBaseUrl(null));
-  }, []);
-  return useAdminPoll<ClientStats>(baseUrl, "/stats", 1000, running);
+  return useAdminPoll<ClientStats>(ipc.clientStats, "client", 1000, running);
 }
 
 export function useClientConnections(running: boolean, intervalMs = 1000) {
-  const [baseUrl, setBaseUrl] = useState<string | null>(null);
-  useEffect(() => {
-    ipc.getClientAdminUrl().then(setBaseUrl).catch(() => setBaseUrl(null));
-  }, []);
-  return useAdminPoll<ClientStats>(baseUrl, "/stats", intervalMs, running);
+  return useAdminPoll<ClientStats>(ipc.clientStats, "client-conns", intervalMs, running);
 }

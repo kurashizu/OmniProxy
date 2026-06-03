@@ -17,13 +17,25 @@ pub fn init() {
         let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
             .unwrap_or_else(|_| "client=info".into());
         tracing_subscriber::registry()
-            .with(tracing_subscriber::fmt::layer().with_filter(env_filter))
+            // Route fmt output to stderr so the proxy's stderr relay
+            // (which the GUI's `last_error` buffer tracks) captures
+            // everything the client logs at WARN/ERROR.
+            // with_ansi(false) — GUI surfaces this in dialogs/banners,
+            // escape codes would render as literal garbage.
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .with_writer(std::io::stderr)
+                    .with_ansi(false)
+                    .with_filter(env_filter),
+            )
             .with(console_layer)
             .init();
     }
 
     #[cfg(not(feature = "console"))]
     tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .with_ansi(false)
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| "client=info".into()),

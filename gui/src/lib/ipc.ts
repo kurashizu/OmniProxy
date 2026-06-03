@@ -15,11 +15,19 @@ export const ipc = {
   proxyStatus: () => invoke<ProxyState>("proxy_status"),
   proxyBinaryPath: () => invoke<string | null>("proxy_binary_path"),
 
-  getProxyAdminUrl: () => invoke<string>("get_proxy_admin_url"),
-  getClientAdminUrl: () => invoke<string>("get_client_admin_url"),
+  // Stats are fetched on the Rust side via Tauri commands. We can't
+  // use the webview's fetch() for this — WebView2 has been observed
+  // to silently fail on loopback requests in some configurations,
+  // leaving the UI with permanent placeholder state.
+  proxyStats: () => invoke<ProxyStats | null>("proxy_stats"),
+  clientStats: () => invoke<ClientStats | null>("client_stats"),
+  proxyRoutes: () => invoke<ProxyRoute[] | null>("proxy_routes"),
 
   isElevated: () => invoke<boolean>("is_elevated"),
   checkBinaryPresent: () => invoke<boolean>("check_binary_present"),
+
+  logDir: () => invoke<string>("log_dir"),
+  openLogDir: () => invoke<void>("open_log_dir"),
 };
 
 export async function openExternalUrl(url: string): Promise<void> {
@@ -28,27 +36,4 @@ export async function openExternalUrl(url: string): Promise<void> {
   } catch {
     window.open(url, "_blank", "noopener");
   }
-}
-
-export async function fetchAdmin<T>(
-  baseUrl: string, path: string, signal?: AbortSignal, timeoutMs = 1500,
-): Promise<T | null> {
-  const c = new AbortController();
-  const t = setTimeout(() => c.abort(), timeoutMs);
-  const s = signal ? composeSignals(signal, c.signal) : c.signal;
-  try {
-    const res = await fetch(`${baseUrl}${path}`, { signal: s });
-    if (!res.ok) return null;
-    return await res.json() as T;
-  } catch { return null; }
-  finally { clearTimeout(t); }
-}
-
-function composeSignals(a: AbortSignal, b: AbortSignal): AbortSignal {
-  if (a.aborted || b.aborted) { const c = new AbortController(); c.abort(); return c.signal; }
-  const c = new AbortController();
-  const onAbort = () => c.abort();
-  a.addEventListener("abort", onAbort, { once: true });
-  b.addEventListener("abort", onAbort, { once: true });
-  return c.signal;
 }

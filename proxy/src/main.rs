@@ -16,7 +16,18 @@ async fn main() -> Result<()> {
     disable_quick_edit_mode();
 
     info!("[main] initializing tracing");
+    // Write tracing output to stderr so the GUI's `last_error` buffer
+    // (which only tracks stderr lines) captures fatal errors. Without
+    // this, the user would see a generic "proxy exited with code 1"
+    // because the actual `error!` log goes to stdout, which the GUI
+    // ignores for last_error purposes.
+    //
+    // `with_ansi(false)` is critical: the GUI captures stderr and
+    // surfaces it in dialogs/banners. ANSI escape codes would render
+    // as literal `[2m...[0m` garbage in those text fields.
     tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .with_ansi(false)
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| "proxy=info".into()),

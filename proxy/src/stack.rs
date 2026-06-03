@@ -22,7 +22,64 @@ pub fn spawn(bin: &std::path::Path, args: &[String], label: &str) -> Result<Chil
         .kill_on_drop(true)
         .spawn()
         .map_err(|e| anyhow::anyhow!("spawn {label} ({bin:?}): {e}"))?;
+
+    // CRITICAL: assign the spawned child to a Windows Job Object that
+    // kills its members when the job handle is closed. The proxy
+    // (us) is spawned with `kill_on_drop`, but that only fires when
+    // the Child struct is dropped — and when WE are killed by
+    // TerminateProcess from the GUI, our Child struct is never
+    // dropped. Without the Job Object, the spawned child (client.exe)
+    // would survive our death, hold its ports (e.g. 1080), and
+    // EADDRINUSE on the next start.
+    #[cfg(windows)]
+    {
+        if let Some(handle) = child.raw_handle() {
+            if let Err(e) = assign_to_kill_job(handle as _) {
+                // Non-fatal: log and continue. The spawn itself succeeded;
+                // we'll just lack the orphan-cleanup guarantee.
+                warn!("[stack] failed to attach child to job object: {e}");
+            }
+        }
+    }
+
     Ok(child)
+}
+
+#[cfg(windows)]
+fn assign_to_kill_job(child_handle_raw: *mut std::ffi::c_void) -> Result<()> {
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, SetInformationJobObject,
+        JobObjectExtendedLimitInformation, JOBOBJECT_BASIC_LIMIT_INFORMATION,
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    };
+
+    unsafe {
+        // Create a "kill on close" job. We never call CloseHandle on
+        // the resulting HANDLE; it stays open for the lifetime of this
+        // proxy process. When the proxy exits, the OS closes all
+        // remaining handles and the kernel kills every assigned
+        // process. HANDLE is a plain isize (Copy) so we drop the
+        // binding here — that's fine, the kernel resource is
+        // independent of the Rust value.
+        let job: HANDLE = CreateJobObjectW(None, None)?;
+        let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION {
+            BasicLimitInformation: JOBOBJECT_BASIC_LIMIT_INFORMATION {
+                LimitFlags: JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        SetInformationJobObject(
+            job,
+            JobObjectExtendedLimitInformation,
+            &mut info as *mut _ as *mut _,
+            std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+        )?;
+        let child_handle = HANDLE(child_handle_raw as isize);
+        AssignProcessToJobObject(job, child_handle)?;
+        Ok(())
+    }
 }
 
 pub async fn kill_quiet(child: &mut Child) {
@@ -45,20 +102,61 @@ pub async fn kill_quiet(child: &mut Child) {
     }
 }
 
-async fn wait_for_socks(port: u16, deadline: Duration) -> Result<()> {
+/// Returns the captured last-error line of the client process (a
+/// short string the user can read), if the process has died while we
+/// were waiting for the SOCKS5 port. `last_error` is a shared buffer
+/// that the stderr-relay task is filling in real time.
+async fn check_client_death(
+    client: &mut Child,
+    last_error: &Arc<tokio::sync::Mutex<Option<String>>>,
+) -> Option<String> {
+    match client.try_wait() {
+        Ok(Some(status)) => {
+            let code = status.code().unwrap_or(-1);
+            let captured = last_error.lock().await.clone();
+            let reason = captured.unwrap_or_else(|| match code {
+                10 => "authentication failed: proxy token was rejected by the server".to_string(),
+                11 => "server unreachable: could not connect to the proxy server".to_string(),
+                _ => format!("client exited with code {code} before SOCKS5 was ready"),
+            });
+            Some(reason)
+        }
+        _ => None,
+    }
+}
+
+async fn wait_for_socks(
+    port: u16,
+    deadline: Duration,
+    client: &mut Child,
+    last_error: &Arc<tokio::sync::Mutex<Option<String>>>,
+) -> Result<()> {
     let addr = format!("127.0.0.1:{port}");
     let start = std::time::Instant::now();
+    let mut poll_ms = 100u64;
     while start.elapsed() < deadline {
+        if let Some(reason) = check_client_death(client, last_error).await {
+            // Surface the actual cause of the failure, not a generic
+            // "did not become ready". On a bad server the client exits
+            // almost immediately with a useful message; on a good server
+            // it lives forever and the loop terminates by SOCKS5 probe.
+            anyhow::bail!("{reason}");
+        }
         if TcpStream::connect(&addr).await.is_ok() {
             info!("[stack] SOCKS5 port {} is ready", port);
             return Ok(());
         }
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        tokio::time::sleep(Duration::from_millis(poll_ms)).await;
+        poll_ms = (poll_ms * 3 / 2).min(500);
+    }
+    // One last death check at the deadline — if the client died in
+    // the final window we still want a precise error.
+    if let Some(reason) = check_client_death(client, last_error).await {
+        anyhow::bail!("{reason}");
     }
     anyhow::bail!(
-        "SOCKS5 port {} did not become ready within {:?}",
-        port,
-        deadline
+        "SOCKS5 port {} did not become ready within {:?} (proxy is running but the client never started listening)",
+        port, deadline
     );
 }
 
@@ -85,14 +183,30 @@ pub async fn run_stack(
     let pid = client.id().unwrap_or(0);
     info!("[stack] client started (pid {})", pid);
 
-    // Relay client stderr → proxy stderr so the GUI can capture error messages.
+    // Relay client stderr → proxy stderr so the GUI can capture error
+    // messages. IMPORTANT: we use eprintln! (→ stderr) rather than
+    // warn!() (→ tracing, which the proxy's `tracing_subscriber::fmt()`
+    // writes to stdout by default). The GUI's spawn_log_reader only
+    // updates `last_error` from stderr lines; routing client errors via
+    // tracing would lose them in the "proxy exited with code N" fallback.
+    //
+    // We also keep the last line in a shared buffer so the SOCKS5
+    // readiness loop can surface the client's actual error instead
+    // of a generic "did not become ready" timeout.
+    let last_error: Arc<tokio::sync::Mutex<Option<String>>> =
+        Arc::new(tokio::sync::Mutex::new(None));
     if let Some(stderr) = client.stderr.take() {
+        let last_error_for_reader = last_error.clone();
         tokio::spawn(async move {
             let mut reader = BufReader::new(stderr).lines();
             loop {
                 match reader.next_line().await {
                     Ok(Some(line)) => {
-                        warn!("[client] {line}");
+                        {
+                            let mut g = last_error_for_reader.lock().await;
+                            *g = Some(line.clone());
+                        }
+                        eprintln!("[client] {line}");
                     }
                     Ok(None) => break,
                     Err(e) => {
@@ -111,9 +225,14 @@ pub async fn run_stack(
     *stats.tun_ip.write().await = cfg.tun_ip.clone();
 
     info!("[stack] waiting for SOCKS5 port to be ready");
-    wait_for_socks(cfg.socks_port, Duration::from_secs(15))
-        .await
-        .context("wait for SOCKS5 ready")?;
+    wait_for_socks(
+        cfg.socks_port,
+        Duration::from_secs(8),
+        &mut client,
+        &last_error,
+    )
+    .await
+    .context("wait for SOCKS5 ready")?;
 
     // Inner restart loop: forwarder is restarted on non-critical exits.
     // Critical TUN↔stack errors break out to the caller (run_loop handles full restart).

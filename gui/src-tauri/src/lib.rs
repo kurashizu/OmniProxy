@@ -10,7 +10,7 @@ use std::sync::{Mutex, OnceLock};
 
 use tauri::{Manager, RunEvent, WindowEvent};
 
-use crate::state::{AppState, ProxyStateKind};
+use crate::state::AppState;
 
 /// Global handle to the GUI's log file. Wrapped in a `Mutex<File>` so
 /// writes are synchronous — no background thread that can be killed
@@ -24,17 +24,20 @@ static LOG_FILE: OnceLock<Mutex<std::fs::File>> = OnceLock::new();
 static LOG_PATH: OnceLock<PathBuf> = OnceLock::new();
 
 /// Pick a writable directory for the GUI's log file. Order:
-/// 1. `%LOCALAPPDATA%\OmniProxy\logs\`   — always writable for the user
-/// 2. `<exe-dir>\logs\`                   — next to the binary if writable
+/// 1. `<exe-dir>\logs\`                   — next to the binary (preferred,
+///                                          so logs ship with the bundle
+///                                          and the user can find them
+///                                          next to omniproxy-gui.exe)
+/// 2. `%LOCALAPPDATA%\OmniProxy\logs\`   — Windows standard app-data
 /// 3. `%TEMP%\omniproxy-gui\logs\`        — last-resort fallback
 pub fn log_dir() -> PathBuf {
     let candidates: [PathBuf; 3] = [
-        std::env::var("LOCALAPPDATA")
-            .map(|p| PathBuf::from(p).join("OmniProxy").join("logs"))
-            .unwrap_or_default(),
         std::env::current_exe()
             .ok()
             .and_then(|p| p.parent().map(|d| d.join("logs")))
+            .unwrap_or_default(),
+        std::env::var("LOCALAPPDATA")
+            .map(|p| PathBuf::from(p).join("OmniProxy").join("logs"))
             .unwrap_or_default(),
         std::env::temp_dir().join("omniproxy-gui").join("logs"),
     ];
@@ -216,6 +219,33 @@ pub fn run() {
         };
         let app_state = AppState::new(config_path.clone(), cfg);
         app.manage(app_state);
+
+        // Match the WebView2 native background to the page surface.
+        // Without this, WebView2 paints a default white background
+        // around the rendered HTML, producing a visible white frame
+        // around the dark UI (and a white flash on startup / resize).
+        // The format is RGBA in `0..=255`; `0f1115` is the value of
+        // `--color-surface` in tailwind theme.
+        for window in app.webview_windows().values() {
+            let _ = window.set_background_color(Some(tauri::webview::Color(
+                0x0f, 0x11, 0x15, 0xff,
+            )));
+        }
+
+        // On Windows 11, DWM adds a 1-px system border around every
+        // window — even ones with `decorations: false`.  Set the border
+        // colour to match the app surface so it blends in, eliminating
+        // the white ring visible on dark-themed desktops.
+        #[cfg(windows)]
+        {
+            use tauri::Manager as _;
+            for window in app.webview_windows().values() {
+                if let Ok(hwnd) = window.hwnd() {
+                    set_dwm_border_color(hwnd.0 as _);
+                }
+            }
+        }
+
         log_line("INFO", "setup callback complete");
         Ok(())
     });
@@ -235,6 +265,9 @@ pub fn run() {
         commands::proxy_binary_path,
         commands::get_proxy_admin_url,
         commands::get_client_admin_url,
+        commands::proxy_stats,
+        commands::client_stats,
+        commands::proxy_routes,
         commands::is_elevated,
         commands::check_binary_present,
     ]);
@@ -262,19 +295,51 @@ pub fn run() {
         {
             let state: tauri::State<'_, AppState> = app_handle.state();
             let child_arc = state.child.clone();
-            let proxy_state = state.proxy_state.clone();
+            // Signal the waiter to stop the proxy child. The waiter owns
+            // the `Child` and is the only place that should call kill();
+            // we just hand it a stop signal and let it tear down. The GUI
+            // process will exit shortly after, and `kill_on_drop` on the
+            // `Child` is the final safety net if the waiter is somehow
+            // cancelled mid-shutdown.
             tauri::async_runtime::spawn(async move {
-                let mut g = child_arc.lock().await;
-                if let Some(mut p) = g.take() {
-                    crate::process::kill_child(&mut p.child).await;
+                let tx = {
+                    let guard = child_arc.lock().await;
+                    guard.as_ref().map(|p| p.stop_tx.clone())
+                };
+                if let Some(tx) = tx {
+                    let _ = tx.send(true);
                 }
-                let mut s = proxy_state.lock().await;
-                s.state = ProxyStateKind::Stopped;
-                s.pid = 0;
             });
         }
         if let RunEvent::ExitRequested { .. } = event {
             let _ = app_handle.state::<AppState>();
         }
     });
+}
+
+/// Set the DWM border colour for an HWND to match the app surface (#0f1115).
+///
+/// On Windows 11, DWM renders a 1-px coloured border around every top-level
+/// window regardless of `decorations: false`.  Calling this with the surface
+/// colour makes the border invisible against the dark background.
+///
+/// `DWMWA_BORDER_COLOR` (value 34) accepts a `COLORREF` (0x00BBGGRR).
+/// `#0f1115` in COLORREF byte order: R=0x0f, G=0x11, B=0x15 → 0x00_15_11_0f.
+/// Using `DWMWA_COLOR_NONE` (0xFFFF_FFFF) would ask DWM to use no border at
+/// all, but that leaves a transparent gap; matching the colour is cleaner.
+#[cfg(windows)]
+fn set_dwm_border_color(hwnd: isize) {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_BORDER_COLOR};
+
+    // COLORREF: 0x00BBGGRR.  Surface colour #0f1115 → R=0x0f G=0x11 B=0x15.
+    let color: u32 = 0x0015_110f;
+    unsafe {
+        let _ = DwmSetWindowAttribute(
+            HWND(hwnd as _),
+            DWMWA_BORDER_COLOR,
+            &color as *const u32 as *const _,
+            std::mem::size_of::<u32>() as u32,
+        );
+    }
 }

@@ -1,19 +1,16 @@
 "use client";
 import Image from "next/image";
-import { useEffect, useRef } from "react";
+import { useEffect, useState } from "react";
+import { getCurrentWindow, type Window } from "@tauri-apps/api/window";
 import { useAppStore } from "@/store/appStore";
 import { t } from "@/lib/i18n";
 
-type TauriWin = { minimize(): Promise<void>; close(): Promise<void> };
-
 export function TopBar() {
   const locale = useAppStore((s) => s.locale);
-  const winRef = useRef<TauriWin | null>(null);
+  const [win, setWin] = useState<Window | null>(null);
 
   useEffect(() => {
-    import("@tauri-apps/api/window")
-      .then((m) => { winRef.current = m.getCurrentWindow() as TauriWin; })
-      .catch(() => {});
+    setWin(getCurrentWindow());
   }, []);
 
   return (
@@ -26,7 +23,7 @@ export function TopBar() {
       </div>
       <div className="flex">
         <button
-          onClick={() => winRef.current?.minimize()}
+          onClick={() => void win?.minimize()}
           className="flex items-center justify-center w-9 h-9 text-muted hover:text-text hover:bg-border transition-colors"
         >
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
@@ -34,7 +31,7 @@ export function TopBar() {
           </svg>
         </button>
         <button
-          onClick={() => winRef.current?.close()}
+          onClick={() => void win?.close()}
           className="flex items-center justify-center w-9 h-9 text-muted hover:text-white hover:bg-danger transition-colors"
         >
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none">

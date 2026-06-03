@@ -9,15 +9,19 @@ on:
 permissions:
     contents: write
 
+# All Cargo output goes to a single shared directory so every job's cache
+# key covers the same artifact tree and the package job can use a plain
+# path reference without guessing per-crate subdirectories.
 env:
     CARGO_TARGET_DIR: ${{ github.workspace }}/target/ci
 
 jobs:
+    # ── Build proxy.exe ───────────────────────────────────────────────
     build-proxy:
         name: Build proxy.exe
         runs-on: windows-latest
         steps:
-            - uses: actions/checkout@v6
+            - uses: actions/checkout@v4
 
             - name: Install Rust
               uses: dtolnay/rust-toolchain@stable
@@ -40,18 +44,19 @@ jobs:
               run: cargo build -p proxy --release --target x86_64-pc-windows-msvc
 
             - name: Upload proxy.exe
-              uses: actions/upload-artifact@v7
+              uses: actions/upload-artifact@v4
               with:
                   name: gui-proxy-exe
                   path: ${{ github.workspace }}/target/ci/x86_64-pc-windows-msvc/release/proxy.exe
                   if-no-files-found: error
                   retention-days: 2
 
+    # ── Build client.exe ──────────────────────────────────────────────
     build-client:
         name: Build client.exe
         runs-on: windows-latest
         steps:
-            - uses: actions/checkout@v6
+            - uses: actions/checkout@v4
 
             - name: Install Rust
               uses: dtolnay/rust-toolchain@stable
@@ -74,18 +79,20 @@ jobs:
               run: cargo build -p client --release --target x86_64-pc-windows-msvc
 
             - name: Upload client.exe
-              uses: actions/upload-artifact@v7
+              uses: actions/upload-artifact@v4
               with:
                   name: gui-client-exe
                   path: ${{ github.workspace }}/target/ci/x86_64-pc-windows-msvc/release/client.exe
                   if-no-files-found: error
                   retention-days: 2
 
+    # ── Build omniproxy-gui.exe ───────────────────────────────────────
     build-gui:
         name: Build omniproxy-gui.exe
+        needs: [build-proxy, build-client]
         runs-on: windows-latest
         steps:
-            - uses: actions/checkout@v6
+            - uses: actions/checkout@v4
 
             - name: Install Rust
               uses: dtolnay/rust-toolchain@stable
@@ -117,24 +124,30 @@ jobs:
               shell: bash
               run: pnpm install --frozen-lockfile
 
+            # Download the real binaries so Tauri's bundle.resources list
+            # resolves to non-empty files (Tauri validates paths at build time).
+            - name: Download proxy.exe
+              uses: actions/download-artifact@v4
+              with:
+                  name: gui-proxy-exe
+                  path: gui/src-tauri/resources
+
+            - name: Download client.exe
+              uses: actions/download-artifact@v4
+              with:
+                  name: gui-client-exe
+                  path: gui/src-tauri/resources
+
             - name: Download wintun.dll
               shell: powershell
               run: |
                   curl.exe -sL https://www.wintun.net/builds/wintun-0.14.1.zip -o wintun.zip
                   Expand-Archive -Force wintun.zip -DestinationPath wintun
-                  $dll = Get-ChildItem -Recurse -Path wintun -Filter wintun.dll | Select-Object -First 1 -ExpandProperty FullName
-                  if (-not $dll) { throw "wintun.dll not found" }
-                  New-Item -ItemType Directory -Force -Path "$env:GITHUB_WORKSPACE/target/ci/x86_64-pc-windows-msvc/release" | Out-Null
-                  Copy-Item $dll "$env:GITHUB_WORKSPACE/target/ci/x86_64-pc-windows-msvc/release/wintun.dll"
-
-            - name: Seed Tauri resources
-              shell: bash
-              working-directory: gui/src-tauri
-              run: |
-                  mkdir -p resources
-                  : > resources/proxy.exe
-                  : > resources/client.exe
-                  cp "$GITHUB_WORKSPACE/target/ci/x86_64-pc-windows-msvc/release/wintun.dll" resources/wintun.dll
+                  $dll = Get-ChildItem -Recurse -Path wintun -Filter wintun.dll |
+                         Where-Object { $_.FullName -like "*\amd64\*" } |
+                         Select-Object -First 1 -ExpandProperty FullName
+                  if (-not $dll) { throw "wintun.dll (amd64) not found" }
+                  Copy-Item $dll gui/src-tauri/resources/wintun.dll
 
             - name: Build omniproxy-gui
               env:
@@ -142,73 +155,90 @@ jobs:
                   RUSTFLAGS: "-Ctarget-feature=+crt-static"
               shell: bash
               working-directory: gui
+              # --no-bundle: produce the raw .exe only; we assemble the
+              # portable zip ourselves in the package job.
               run: pnpm tauri build --target x86_64-pc-windows-msvc --no-bundle
 
             - name: Upload omniproxy-gui.exe
-              uses: actions/upload-artifact@v7
+              uses: actions/upload-artifact@v4
               with:
                   name: gui-omniproxy-gui-exe
                   path: ${{ github.workspace }}/target/ci/x86_64-pc-windows-msvc/release/omniproxy-gui.exe
                   if-no-files-found: error
                   retention-days: 2
 
+    # ── Assemble portable zip ─────────────────────────────────────────
+    #
+    # Target layout (mirrors the hand-deployed test folder):
+    #
+    #   OmniProxy-GUI-windows-x86_64/
+    #   ├── omniproxy-gui.exe
+    #   ├── proxy.exe
+    #   ├── client.exe
+    #   └── wintun.dll
+    #
+    # find_binary() in process/mod.rs searches <exe-dir>/ first, so all
+    # four files must sit in the same flat directory.  A config.yaml is
+    # created by the GUI on first launch; wintun.dll is loaded by the
+    # WinTUN driver at runtime directly from the exe directory.
     package:
         name: Assemble portable zip
         needs: [build-proxy, build-client, build-gui]
         runs-on: windows-latest
         steps:
-            - uses: actions/checkout@v6
-
-            - name: Download proxy.exe
-              uses: actions/download-artifact@v8
-              with:
-                  name: gui-proxy-exe
-                  path: dist
-                  merge-multiple: true
-
-            - name: Download client.exe
-              uses: actions/download-artifact@v8
-              with:
-                  name: gui-client-exe
-                  path: dist
-                  merge-multiple: true
+            - uses: actions/checkout@v4
 
             - name: Download omniproxy-gui.exe
-              uses: actions/download-artifact@v8
+              uses: actions/download-artifact@v4
               with:
                   name: gui-omniproxy-gui-exe
                   path: dist
-                  merge-multiple: true
+
+            - name: Download proxy.exe
+              uses: actions/download-artifact@v4
+              with:
+                  name: gui-proxy-exe
+                  path: dist
+
+            - name: Download client.exe
+              uses: actions/download-artifact@v4
+              with:
+                  name: gui-client-exe
+                  path: dist
 
             - name: Download wintun.dll
               shell: powershell
               run: |
                   curl.exe -sL https://www.wintun.net/builds/wintun-0.14.1.zip -o wintun.zip
                   Expand-Archive -Force wintun.zip -DestinationPath wintun
-                  $dll = Get-ChildItem -Recurse -Path wintun -Filter wintun.dll | Select-Object -First 1 -ExpandProperty FullName
-                  if (-not $dll) { throw "wintun.dll not found" }
+                  $dll = Get-ChildItem -Recurse -Path wintun -Filter wintun.dll |
+                         Where-Object { $_.FullName -like "*\amd64\*" } |
+                         Select-Object -First 1 -ExpandProperty FullName
+                  if (-not $dll) { throw "wintun.dll (amd64) not found" }
                   Copy-Item $dll dist/wintun.dll
 
-            - name: Stage package
+            - name: Verify layout
               shell: bash
               run: |
-                  mkdir -p dist/resources
-                  mv dist/proxy.exe dist/resources/proxy.exe
-                  mv dist/client.exe dist/resources/client.exe
-                  mv dist/wintun.dll dist/resources/wintun.dll
-                  cp README.md dist/ 2>/dev/null || true
-                  ls -la dist
-                  ls -la dist/resources
+                  echo "=== dist/ contents ==="
+                  ls -lh dist/
+                  for f in omniproxy-gui.exe proxy.exe client.exe wintun.dll; do
+                      test -f "dist/$f" || { echo "MISSING: $f"; exit 1; }
+                  done
 
             - name: Create zip
               shell: powershell
               run: |
                   $zip = "omniproxy-gui-windows-x86_64.zip"
                   if (Test-Path $zip) { Remove-Item -Force $zip }
-                  Compress-Archive -Path dist\* -DestinationPath $zip
+                  # Compress the *contents* of dist/ so the zip extracts to a
+                  # flat directory (no extra dist/ wrapper folder).
+                  Push-Location dist
+                  Compress-Archive -Path * -DestinationPath "$env:GITHUB_WORKSPACE\$zip"
+                  Pop-Location
 
-            - name: Upload package
-              uses: actions/upload-artifact@v7
+            - name: Upload zip artifact
+              uses: actions/upload-artifact@v4
               with:
                   name: omniproxy-gui-windows-x86_64
                   path: omniproxy-gui-windows-x86_64.zip

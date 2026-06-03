@@ -64,6 +64,12 @@ export function NodeFormCard({ initial, state, onSaved }: {
           >
             {t("settings.openDir", locale)}
           </button>
+          <button onClick={() => ipc.openLogDir().catch(() => {})}
+            className="rounded border border-border bg-surface px-2 py-0.5 text-muted hover:text-text hover:border-primary"
+            title={t("settings.logDir", locale)}
+          >
+            {t("settings.logDir", locale)}
+          </button>
         </div>
       }
     >
