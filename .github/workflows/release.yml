@@ -4,6 +4,8 @@ on:
     push:
         tags:
             - "v*"
+    # Also by hand, so a new target can be proven before it is attached to a tag.
+    workflow_dispatch:
 
 jobs:
     # ── Build CLI ─────────────────────────────────────────────────────
@@ -31,6 +33,14 @@ jobs:
                       ext: ""
                       name: linux-aarch64
 
+                    # No riscv64 runner exists, so this one is cross-compiled and
+                    # cannot be run here to check.
+                    - target: riscv64gc-unknown-linux-musl
+                      os: ubuntu-latest
+                      ext: ""
+                      name: linux-riscv64
+                      cross: true
+
                     - target: x86_64-apple-darwin
                       os: macos-latest
                       ext: ""
@@ -52,8 +62,15 @@ jobs:
                   targets: ${{ matrix.target }}
 
             - name: Install musl tools
-              if: startsWith(matrix.os, 'ubuntu')
+              if: startsWith(matrix.os, 'ubuntu') && !matrix.cross
               run: sudo apt-get update && sudo apt-get install -y musl-tools
+              shell: bash
+
+            - name: Install cross
+              if: matrix.cross
+              run: |
+                  curl -sSfL https://github.com/cross-rs/cross/releases/latest/download/cross-x86_64-unknown-linux-gnu.tar.gz \
+                    | sudo tar xz -C /usr/local/bin cross
               shell: bash
 
             - name: Cache cargo
@@ -64,7 +81,7 @@ jobs:
             - name: Build CLI
               env:
                   RUSTFLAGS: ${{ startsWith(matrix.os, 'windows') && '-Ctarget-feature=+crt-static' || '' }}
-              run: cargo build -p client -p server -p proxy --release --target ${{ matrix.target }}
+              run: ${{ matrix.cross && 'cross' || 'cargo' }} build -p client -p server -p proxy --release --target ${{ matrix.target }}
 
             - name: Set executable permissions
               run: |
@@ -96,6 +113,9 @@ jobs:
               shell: powershell
 
             - name: Smoke test
+              # Skipped where the binaries are for another architecture than the
+              # runner: there is nothing here that can execute them.
+              if: ${{ !matrix.cross }}
               run: |
                   ./target/${{ matrix.target }}/release/client${{ matrix.ext }} --version
                   ./target/${{ matrix.target }}/release/server${{ matrix.ext }} --version
@@ -140,6 +160,12 @@ jobs:
 
                     - name: linux-aarch64
                       archive: omni-proxy-linux-aarch64.tar.xz
+                      ext: ""
+                      config: proxy/config.linux.yml
+                      platform: linux
+
+                    - name: linux-riscv64
+                      archive: omni-proxy-linux-riscv64.tar.xz
                       ext: ""
                       config: proxy/config.linux.yml
                       platform: linux
