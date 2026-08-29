@@ -33,13 +33,14 @@ jobs:
                       ext: ""
                       name: linux-aarch64
 
-                    # No riscv64 runner exists, so this one is cross-compiled and
-                    # cannot be run here to check.
+                    # No riscv64 runner exists, so this one is cross-compiled
+                    # with a musl toolchain and cannot be run here to check.
                     - target: riscv64gc-unknown-linux-musl
                       os: ubuntu-latest
                       ext: ""
                       name: linux-riscv64
                       cross: true
+                      toolchain: riscv64-unknown-linux-musl
 
                     - target: x86_64-apple-darwin
                       os: macos-latest
@@ -66,11 +67,15 @@ jobs:
               run: sudo apt-get update && sudo apt-get install -y musl-tools
               shell: bash
 
-            - name: Install cross
+            - name: Install the cross toolchain
+              # cross-rs has no image for this target and quietly falls back to
+              # the host compiler, which then cannot find a riscv64 linker. A
+              # musl toolchain on PATH is both simpler and easier to read.
               if: matrix.cross
               run: |
-                  curl -sSfL https://github.com/cross-rs/cross/releases/latest/download/cross-x86_64-unknown-linux-gnu.tar.gz \
-                    | sudo tar xz -C /usr/local/bin cross
+                  curl -sSfL "https://github.com/cross-tools/musl-cross/releases/latest/download/${{ matrix.toolchain }}.tar.xz" \
+                    | sudo tar xJ -C /opt
+                  echo "/opt/${{ matrix.toolchain }}/bin" >> "$GITHUB_PATH"
               shell: bash
 
             - name: Cache cargo
@@ -81,7 +86,10 @@ jobs:
             - name: Build CLI
               env:
                   RUSTFLAGS: ${{ startsWith(matrix.os, 'windows') && '-Ctarget-feature=+crt-static' || '' }}
-              run: ${{ matrix.cross && 'cross' || 'cargo' }} build -p client -p server -p proxy --release --target ${{ matrix.target }}
+                  CARGO_TARGET_RISCV64GC_UNKNOWN_LINUX_MUSL_LINKER: ${{ matrix.toolchain && format('{0}-gcc', matrix.toolchain) || '' }}
+                  CC_riscv64gc_unknown_linux_musl: ${{ matrix.toolchain && format('{0}-gcc', matrix.toolchain) || '' }}
+                  AR_riscv64gc_unknown_linux_musl: ${{ matrix.toolchain && format('{0}-ar', matrix.toolchain) || '' }}
+              run: cargo build -p client -p server -p proxy --release --target ${{ matrix.target }}
 
             - name: Set executable permissions
               run: |
